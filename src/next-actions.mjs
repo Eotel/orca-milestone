@@ -377,8 +377,9 @@ export async function readPaneScreen(run, paneKey) {
  *   dangerous command without `confirmed: true`, or what `restart` resolves to. It throws when sending fails.
  * @param restart    starts a session again, see restart.mjs
  * @param grantRest  allows the rest of the turn of a session id, see turn-grant.mjs
+ * @param sendPrompt sends a proposal's prompt to a terminal handle, by default with `orca terminal send`
  */
-export function createNextSender({ readOffers, run, restart = async () => ({ sent: false, reason: 'stale' }), grantRest = async () => { throw new Error('cannot allow the rest of a turn') }, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+export function createNextSender({ readOffers, run, restart = async () => ({ sent: false, reason: 'stale' }), grantRest = async () => { throw new Error('cannot allow the rest of a turn') }, sendPrompt: deliver, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   const used = new Set()
 
   function take(offer) {
@@ -408,6 +409,7 @@ export function createNextSender({ readOffers, run, restart = async () => ({ sen
       await press(handle, STASH_KEY)
       await wait(STASH_WAIT_MS)
     }
+    if (deliver) return deliver(handle, prompt)
     const reply = await run(
       ['terminal', 'send', '--terminal', handle, '--text', prompt, '--enter', '--wait-submit', SUBMIT_WAIT_SECONDS, '--json'],
       SEND_TIMEOUT_MS

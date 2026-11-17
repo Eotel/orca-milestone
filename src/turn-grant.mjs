@@ -6,7 +6,7 @@
 // prompt, and never covers a dangerous command or one that reaches past this machine.
 import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { claudePaths, findTranscript } from './claude-sessions.mjs'
+import { claudeRoots, findTranscript } from './claude-sessions.mjs'
 import { isDangerous } from './dangerous.mjs'
 import { riskOf } from './risk.mjs'
 
@@ -131,14 +131,14 @@ export function hasGrantHook(args) {
 
 /** Grants by session id, for the cards: what was allowed this turn, and allowing the rest of it. */
 export function createGrantAccess(home) {
-  const { projectsRoot } = claudePaths(home)
+  const transcriptOf = async (sessionId) => findTranscript((await claudeRoots(home)).projectsRoots, sessionId)
   return {
     async allowed(sessionId) {
-      const transcriptPath = await findTranscript(projectsRoot, sessionId)
+      const transcriptPath = await transcriptOf(sessionId)
       return transcriptPath ? ((await currentGrant({ home, sessionId, transcriptPath }))?.allowed ?? []) : []
     },
     async grant(sessionId) {
-      const transcriptPath = await findTranscript(projectsRoot, sessionId)
+      const transcriptPath = await transcriptOf(sessionId)
       if (!transcriptPath || !(await grantRestOfTurn({ home, sessionId, transcriptPath }))) throw new Error('no turn to allow the rest of')
     }
   }

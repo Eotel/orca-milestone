@@ -1,5 +1,3 @@
-import { fileURLToPath } from 'node:url'
-
 // What the plugin adds when Orca starts an agent, so the panel has tasks to show without the user
 // editing any settings. Claude Code leaves its task tools off on newer models and writes no goal
 // unless told to, so it gets both; Codex has no task tools, so it gets the MCP tool in
@@ -41,23 +39,9 @@ export function claudeInstructions() {
   return CLAUDE_INSTRUCTIONS
 }
 
-const HOOK_SCRIPT = fileURLToPath(new URL('./permission-hook.mjs', import.meta.url))
-
-/**
- * The settings a Claude session gets on its command line: the PermissionRequest hook that allows
- * the rest of a turn once the user said so (turn-grant.mjs). It runs on the Node of whatever starts
- * the session: Orca's own binary in the worker, which needs ELECTRON_RUN_AS_NODE. Null when a path
- * cannot go inside the single quotes of the command line.
- */
-export function claudeSettings(execPath = process.execPath) {
-  if (`${execPath}${HOOK_SCRIPT}`.includes("'")) return null
-  const command = `ELECTRON_RUN_AS_NODE=1 ${JSON.stringify(execPath)} ${JSON.stringify(HOOK_SCRIPT)}`
-  return JSON.stringify({ hooks: { PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 10 }] }] } })
-}
-
 /** What the command line of a session started now contains, to tell one started earlier. */
 export function launchSignature() {
-  return [CLAUDE_INSTRUCTIONS, HOOK_SCRIPT]
+  return [CLAUDE_INSTRUCTIONS]
 }
 
 /**
@@ -68,9 +52,7 @@ export function withTaskInstructions(command) {
   const match = command.match(/^((?:\S*\/)?(?:claude|orca(?:-dev|-ide)?\s+claude-teams))(?=\s|$)/)
   // Orca or the user may have appended their own, and the last flag would win over the other.
   if (!match || /\s--append-system-prompt(-file)?(\s|=)/.test(command)) return command
-  // Settings of the user's own on the command line stay theirs alone.
-  const settings = /\s--settings(\s|=)/.test(command) ? null : claudeSettings()
-  return `${match[1]} --append-system-prompt '${CLAUDE_INSTRUCTIONS}'${settings ? ` --settings '${settings}'` : ''}${command.slice(match[1].length)}`
+  return `${match[1]} --append-system-prompt '${CLAUDE_INSTRUCTIONS}'${command.slice(match[1].length)}`
 }
 
 /** Adds the tool to a command line that starts with codex. Anything else is left alone. */

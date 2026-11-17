@@ -6,7 +6,7 @@
 import { execFile } from 'node:child_process'
 import { open } from 'node:fs/promises'
 import { join } from 'node:path'
-import { claudePaths, readRunningSessions } from './claude-sessions.mjs'
+import { claudeRoots, readRunningSessions } from './claude-sessions.mjs'
 import { launchSignature, withTaskInstructions } from './launch-hook.mjs'
 
 const TAIL_BYTES = 256 * 1024
@@ -49,11 +49,10 @@ export function isStale(args, signature = launchSignature()) {
  * @returns { sessionId, pid, args }
  */
 export function createLaunchInfoReader(home, { readArgsOf = readArgs } = {}) {
-  const { sessionsRoot } = claudePaths(home)
   // A process keeps its command line, so it is read once.
   const known = new Map()
   return async function readLaunchInfo(path) {
-    const inside = (await readRunningSessions(sessionsRoot)).filter((entry) => entry.cwd === path || entry.cwd.startsWith(`${path}/`))
+    const inside = (await readRunningSessions((await claudeRoots(home)).sessionsRoots)).filter((entry) => entry.cwd === path || entry.cwd.startsWith(`${path}/`))
     if (inside.length !== 1) return null
     const [{ sessionId, pid }] = inside
     if (!known.has(pid)) known.set(pid, await readArgsOf(pid))
@@ -150,7 +149,7 @@ function isRunning(pid) {
  *   `{ sent: true }` once the session runs again, `{ sent: false, reason: 'stale' }` when there is
  *   nothing to restart, or `'draft'` when the input box has text. It throws when a step fails.
  */
-export function createRestarter({ home, run, readLaunch, readScreen, readOutput = readOutputTail, parentArgs = readParentArgs, running = isRunning, sessions = () => readRunningSessions(claudePaths(home).sessionsRoot), wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now }) {
+export function createRestarter({ home, run, readLaunch, readScreen, readOutput = readOutputTail, parentArgs = readParentArgs, running = isRunning, sessions = async () => readRunningSessions((await claudeRoots(home)).sessionsRoots), wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now }) {
   async function until(check, ms) {
     const end = now() + ms
     while (now() < end) {

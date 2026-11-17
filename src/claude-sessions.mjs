@@ -4,8 +4,13 @@
 // A plain session names its list by its session id. A session that leads an agent team
 // (`claude --teammate-mode`, which Orca's Agent Teams launch uses) names it after the team,
 // `session-<first 8 hex of the session id>`.
+//
+// Orca runs each of its Claude accounts with a CLAUDE_CONFIG_DIR of its own
+// (~/Library/Application Support/orca/claude-profiles/<id>/home). Those keep their own sessions and
+// teams, and link tasks and projects to ~/.claude's or keep their own, so every reader below takes
+// the folders of all of them.
 import { createReadStream } from 'node:fs'
-import { open, readdir, readFile, stat } from 'node:fs/promises'
+import { open, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 
@@ -24,6 +29,41 @@ export function claudePaths(home) {
     teamsRoot: join(home, '.claude', 'teams'),
     sessionsRoot: join(home, '.claude', 'sessions')
   }
+}
+
+/** ~/.claude and the config folder of each Claude account Orca keeps. */
+export async function claudeConfigDirs(home) {
+  const profiles = join(home, 'Library', 'Application Support', 'orca', 'claude-profiles')
+  const entries = await readdir(profiles, { withFileTypes: true }).catch(() => [])
+  return [join(home, '.claude'), ...entries.filter((entry) => entry.isDirectory()).map((entry) => join(profiles, entry.name, 'home'))]
+}
+
+/**
+ * The tasks, projects, teams and sessions folders of every config folder that has them, each
+ * folder once: an account's tasks and projects are often links to ~/.claude's.
+ */
+export async function claudeRoots(home) {
+  const dirs = await claudeConfigDirs(home)
+  async function foldersNamed(name) {
+    const byTarget = new Map()
+    for (const dir of dirs) {
+      const path = join(dir, name)
+      const target = await realpath(path).catch(() => null)
+      if (target && !byTarget.has(target)) byTarget.set(target, path)
+    }
+    return [...byTarget.values()]
+  }
+  return {
+    tasksRoots: await foldersNamed('tasks'),
+    projectsRoots: await foldersNamed('projects'),
+    teamsRoots: await foldersNamed('teams'),
+    sessionsRoots: await foldersNamed('sessions')
+  }
+}
+
+/** A reader takes one folder or the folders of every config folder. */
+function folders(roots) {
+  return [roots].flat()
 }
 
 export function isSessionId(name) {
@@ -48,19 +88,21 @@ function isRunning(pid) {
  * Ids of the Claude sessions running now. Each running session keeps
  * ~/.claude/sessions/<pid>.json, removed when it exits; the pid is checked in case it crashed.
  */
-export async function readRunningSessionIds(sessionsRoot) {
-  let names
-  try {
-    names = await readdir(sessionsRoot)
-  } catch {
-    return new Set()
-  }
+export async function readRunningSessionIds(sessionsRoots) {
   const ids = new Set()
-  for (const name of names) {
-    if (!/^\d+\.json$/.test(name)) continue
-    const entry = await readJson(join(sessionsRoot, name))
-    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isRunning(entry.pid)) {
-      ids.add(entry.sessionId)
+  for (const sessionsRoot of folders(sessionsRoots)) {
+    let names
+    try {
+      names = await readdir(sessionsRoot)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!/^\d+\.json$/.test(name)) continue
+      const entry = await readJson(join(sessionsRoot, name))
+      if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isRunning(entry.pid)) {
+        ids.add(entry.sessionId)
+      }
     }
   }
   return ids
@@ -98,86 +140,98 @@ export async function readTaskList(dir) {
 }
 
 /** Task lists named by a session or a team that changed within maxAgeMs, newest first. */
-export async function listRecentTaskLists(tasksRoot, { now = Date.now(), maxAgeMs }) {
-  let entries
-  try {
-    entries = await readdir(tasksRoot, { withFileTypes: true })
-  } catch {
-    return []
+export async function listRecentTaskLists(tasksRoots, { now = Date.now(), maxAgeMs }) {
+  const lists = []
+  for (const tasksRoot of folders(tasksRoots)) {
+    let entries
+    try {
+      entries = await readdir(tasksRoot, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    lists.push(...await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() && isTaskListId(entry.name))
+        .map(async (entry) => {
+          const dir = join(tasksRoot, entry.name)
+          try {
+            // Claude replaces task files by rename, which bumps the directory's mtime.
+            const { mtimeMs } = await stat(dir)
+            return { listId: entry.name, dir, updatedAt: mtimeMs }
+          } catch {
+            return null
+          }
+        })
+    ))
   }
-  const lists = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory() && isTaskListId(entry.name))
-      .map(async (entry) => {
-        const dir = join(tasksRoot, entry.name)
-        try {
-          // Claude replaces task files by rename, which bumps the directory's mtime.
-          const { mtimeMs } = await stat(dir)
-          return { listId: entry.name, dir, updatedAt: mtimeMs }
-        } catch {
-          return null
-        }
-      })
-  )
   return lists
     .filter((list) => list && now - list.updatedAt <= maxAgeMs)
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-export async function findTranscript(projectsRoot, sessionId) {
-  let projects
-  try {
-    projects = await readdir(projectsRoot, { withFileTypes: true })
-  } catch {
-    return null
-  }
-  for (const project of projects) {
-    if (!project.isDirectory()) continue
-    const path = join(projectsRoot, project.name, `${sessionId}.jsonl`)
+export async function findTranscript(projectsRoots, sessionId) {
+  for (const projectsRoot of folders(projectsRoots)) {
+    let projects
     try {
-      await stat(path)
-      return path
-    } catch {}
-  }
-  return null
-}
-
-async function findTranscriptByPrefix(projectsRoot, prefix) {
-  let projects
-  try {
-    projects = await readdir(projectsRoot, { withFileTypes: true })
-  } catch {
-    return null
-  }
-  for (const project of projects) {
-    if (!project.isDirectory()) continue
-    let names
-    try {
-      names = await readdir(join(projectsRoot, project.name))
+      projects = await readdir(projectsRoot, { withFileTypes: true })
     } catch {
       continue
     }
-    const name = names.find(
-      (file) => file.startsWith(prefix) && file.endsWith('.jsonl') && isSessionId(file.slice(0, -'.jsonl'.length))
-    )
-    if (name) return join(projectsRoot, project.name, name)
+    for (const project of projects) {
+      if (!project.isDirectory()) continue
+      const path = join(projectsRoot, project.name, `${sessionId}.jsonl`)
+      try {
+        await stat(path)
+        return path
+      } catch {}
+    }
   }
   return null
 }
 
-/** The transcript of the session that owns a task list, or null. */
-export async function findListTranscript({ projectsRoot, teamsRoot }, listId) {
-  if (isSessionId(listId)) return findTranscript(projectsRoot, listId)
+async function findTranscriptByPrefix(projectsRoots, prefix) {
+  for (const projectsRoot of folders(projectsRoots)) {
+    let projects
+    try {
+      projects = await readdir(projectsRoot, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const project of projects) {
+      if (!project.isDirectory()) continue
+      let names
+      try {
+        names = await readdir(join(projectsRoot, project.name))
+      } catch {
+        continue
+      }
+      const name = names.find(
+        (file) => file.startsWith(prefix) && file.endsWith('.jsonl') && isSessionId(file.slice(0, -'.jsonl'.length))
+      )
+      if (name) return join(projectsRoot, project.name, name)
+    }
+  }
+  return null
+}
+
+/**
+ * The transcript of the session that owns a task list, or null.
+ * @param roots `{ projectsRoot, teamsRoot }` of one config folder, or `{ projectsRoots, teamsRoots }` of all
+ */
+export async function findListTranscript({ projectsRoot, teamsRoot, projectsRoots = projectsRoot, teamsRoots = teamsRoot }, listId) {
+  if (isSessionId(listId)) return findTranscript(projectsRoots, listId)
   const prefix = TEAM_LIST_ID.exec(listId)?.[1]
   if (!prefix) return null
   // The team config names the lead session only while the team runs; afterwards only the
   // prefix in the list id is left to go on.
-  const lead = (await readJson(join(teamsRoot, listId, 'config.json')))?.leadSessionId
-  if (typeof lead === 'string' && isSessionId(lead) && lead.startsWith(prefix)) {
-    const transcript = await findTranscript(projectsRoot, lead)
-    if (transcript) return transcript
+  for (const teams of folders(teamsRoots)) {
+    const lead = (await readJson(join(teams, listId, 'config.json')))?.leadSessionId
+    if (typeof lead === 'string' && isSessionId(lead) && lead.startsWith(prefix)) {
+      const transcript = await findTranscript(projectsRoots, lead)
+      if (transcript) return transcript
+    }
   }
-  return findTranscriptByPrefix(projectsRoot, `${prefix}-`)
+  return findTranscriptByPrefix(projectsRoots, `${prefix}-`)
 }
 
 function promptText(message) {
@@ -366,19 +420,21 @@ export async function readTranscriptHead(path) {
 }
 
 /** The running Claude sessions with the folder each works in. */
-export async function readRunningSessions(sessionsRoot) {
-  let names
-  try {
-    names = await readdir(sessionsRoot)
-  } catch {
-    return []
-  }
+export async function readRunningSessions(sessionsRoots) {
   const sessions = []
-  for (const name of names) {
-    if (!/^\d+\.json$/.test(name)) continue
-    const entry = await readJson(join(sessionsRoot, name))
-    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isRunning(entry.pid) && typeof entry.cwd === 'string') {
-      sessions.push({ sessionId: entry.sessionId, cwd: entry.cwd, pid: entry.pid })
+  for (const sessionsRoot of folders(sessionsRoots)) {
+    let names
+    try {
+      names = await readdir(sessionsRoot)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!/^\d+\.json$/.test(name)) continue
+      const entry = await readJson(join(sessionsRoot, name))
+      if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isRunning(entry.pid) && typeof entry.cwd === 'string') {
+        sessions.push({ sessionId: entry.sessionId, cwd: entry.cwd, pid: entry.pid })
+      }
     }
   }
   return sessions
@@ -462,12 +518,12 @@ export function pendingCall(text) {
  * started outside Orca, could be the one asking.
  */
 export function createPendingReader(home, pick) {
-  const { projectsRoot, sessionsRoot } = claudePaths(home)
   return async function readPending(path) {
-    const inside = (await readRunningSessions(sessionsRoot)).filter((entry) => entry.cwd === path || entry.cwd.startsWith(`${path}/`))
+    const { projectsRoots, sessionsRoots } = await claudeRoots(home)
+    const inside = (await readRunningSessions(sessionsRoots)).filter((entry) => entry.cwd === path || entry.cwd.startsWith(`${path}/`))
     const pending = []
     for (const { sessionId } of inside) {
-      const transcript = await findTranscript(projectsRoot, sessionId)
+      const transcript = await findTranscript(projectsRoots, sessionId)
       const found = transcript ? pick(await readTail(transcript).catch(() => '')) : null
       if (found) pending.push(found)
     }

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { appendFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { createMilestoneWorker } from '../src/milestone-worker.mjs'
-import { SESSION_A, SESSION_B, makeHome, markRunning, task, taskCalls, writeTasks, writeTranscript } from './helpers.mjs'
+import { SESSION_A, SESSION_B, makeHome, markRunning, orcaAccount, task, taskCalls, writeTasks, writeTranscript } from './helpers.mjs'
 
 function fakeOrca() {
   const posts = []
@@ -304,4 +304,30 @@ test('openWorkspace opens the listed workspace at the path, and only logs a miss
   fail = true
   assert.deepEqual(await worker.openWorkspace('/work/a'), { opened: false })
   assert.match(logs.join('\n'), /could not open the workspace: refused/)
+})
+
+test('sessions of Orca\'s Claude accounts show, with linked or own task and transcript folders', async () => {
+  const home = await makeHome()
+  const orca = fakeOrca()
+  const linked = await orcaAccount(home, 'account-linked')
+  const own = await orcaAccount(home, 'account-own', { linked: false })
+  await writeTranscript(home, SESSION_A, { cwd: '/work/app', prompt: 'Linked account goal', configDir: linked })
+  await writeTasks(home, SESSION_A, [task(1, 'Read', 'completed'), task(2, 'Write', 'pending')])
+  await writeTranscript(home, SESSION_B, { cwd: '/work/app', prompt: 'Own account goal', configDir: own })
+  const ownTasks = join(own, 'tasks', SESSION_B)
+  await mkdir(ownTasks, { recursive: true })
+  await writeFile(join(ownTasks, '1.json'), JSON.stringify(task(1, 'Only', 'in_progress')))
+  const worker = createMilestoneWorker({
+    orca,
+    home,
+    cli: 'orca',
+    readOrca: async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] }),
+    watchDir: () => {}
+  })
+  await worker.refresh(true)
+  const html = orca.shown()
+  assert.ok(html.includes('Linked account goal'))
+  assert.ok(html.includes('1 / 2'))
+  assert.ok(html.includes('Own account goal'))
+  assert.ok(html.includes('0 / 1'))
 })

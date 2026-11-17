@@ -6,6 +6,7 @@ import { mkdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   claudePaths,
+  claudeRoots,
   findListTranscript,
   currentGoal,
   isListRunning,
@@ -16,15 +17,12 @@ import {
   readTaskList,
   readTranscriptHead,
   createPendingReader,
-  pendingCall,
-  turnEnded,
-  pendingQuestion
+  turnEnded
 } from './claude-sessions.mjs'
 import { readCodexProgress } from './codex-progress.mjs'
 import { buildModel } from './model.mjs'
-import { createNextSender, readPaneScreen, readTerminalScreen } from './next-actions.mjs'
-import { createLaunchInfoReader, createLaunchReader, createRestarter } from './restart.mjs'
-import { createGrantAccess } from './turn-grant.mjs'
+import { createLaneSender } from './lane-send.mjs'
+import { createNextSender } from './next-actions.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
 import { progressDir } from './progress-server.mjs'
 import { renderBody } from './render.mjs'
@@ -42,11 +40,13 @@ export function createMilestoneWorker({
   cli,
   readOrca = readWorkspaces,
   runCli = runOrca,
+  sendToLane = createLaneSender({ home, cli }),
   now = Date.now,
   watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange)
 }) {
-  const paths = claudePaths(home)
-  const { tasksRoot } = paths
+  const { tasksRoot } = claudePaths(home)
+  // Task folders under watch, ~/.claude's and those of Orca's Claude accounts that are not links to it.
+  const watched = new Set()
   const progressRoot = progressDir(home)
   // Transcript heads never change once written; null entries are retried on the next refresh.
   const heads = new Map()
@@ -61,20 +61,12 @@ export function createMilestoneWorker({
   let agents = []
   let offers = []
   const runArgs = (args, timeout) => runCli(cli, args, timeout)
-  // A question or a call waiting for permission is read from the transcript of Claude's session,
-  // a Codex menu from the screen of its pane.
-  const readLaunchInfo = createLaunchInfoReader(home)
-  const grants = createGrantAccess(home)
+  // Only the proposed next steps become cards. Agents ask through triage-notify and run without
+  // permission prompts, and a restart would go around the lane tools, so the readers for questions,
+  // permissions and restarts are left out and offersOf finds none of those.
   const readers = {
-    readQuestion: createPendingReader(home, pendingQuestion),
-    readCall: createPendingReader(home, pendingCall),
     // Orca calls an agent working while its background shells run, even after its turn.
-    readTurnEnded: createPendingReader(home, turnEnded),
-    readPane: (paneKey) => readPaneScreen(runArgs, paneKey),
-    // A Claude session started with older instructions than the launch hook gives now.
-    readLaunch: createLaunchReader(home, { readLaunchInfo }),
-    readLaunchInfo,
-    readAllowed: (sessionId) => grants.allowed(sessionId)
+    readTurnEnded: createPendingReader(home, turnEnded)
   }
   let lastHtml = null
   let started = null
@@ -85,9 +77,9 @@ export function createMilestoneWorker({
   // The last state heard per pane. Agents repeat a state with every hook they fire.
   const paneStates = new Map()
 
-  async function headOf(listId) {
+  async function headOf(roots, listId) {
     if (heads.has(listId)) return heads.get(listId)
-    const transcript = await findListTranscript(paths, listId)
+    const transcript = await findListTranscript(roots, listId)
     const head = transcript ? await readTranscriptHead(transcript).catch(() => null) : null
     if (head) heads.set(listId, { ...head, transcript })
     return heads.get(listId) ?? null
@@ -121,21 +113,34 @@ export function createMilestoneWorker({
    * A finished list whose files Claude already deleted, replayed from its transcript. That
    * happens when the worker starts after the list was finished, as after a restart.
    */
-  async function replayFinished(list) {
+  async function replayFinished(roots, list) {
     const key = `${list.listId}\n${list.updatedAt}`
     if (replayed.has(key)) return
     replayed.set(key, true)
     // Only a list that ever had tasks keeps a high-water mark.
     if (!(await stat(join(list.dir, '.highwatermark')).catch(() => null))) return
-    const head = await headOf(list.listId)
+    const head = await headOf(roots, list.listId)
     if (!head?.transcript) return
     const tasks = await readTasksFromTranscript(head.transcript).catch(() => [])
     if (isFinished(tasks)) lastTasks.set(list.listId, tasks)
   }
 
+  function watchTasks(tasksRoots) {
+    for (const root of tasksRoots) {
+      if (watched.has(root)) continue
+      watched.add(root)
+      watchDir(root, (_event, name) => {
+        if (name && !String(name).endsWith('.lock')) schedule()
+      })
+    }
+  }
+
   async function allSessions() {
-    const running = await readRunningSessionIds(paths.sessionsRoot)
-    const lists = await listRecentTaskLists(tasksRoot, { maxAgeMs: TASK_LIST_MAX_AGE_MS })
+    const roots = await claudeRoots(home)
+    // Watching starts with start(); a folder that appears later, as for a new account, joins then.
+    if (started) watchTasks(roots.tasksRoots)
+    const running = await readRunningSessionIds(roots.sessionsRoots)
+    const lists = await listRecentTaskLists(roots.tasksRoots, { maxAgeMs: TASK_LIST_MAX_AGE_MS })
     const sessions = []
     for (const list of lists) {
       // A list shows only while its session runs: ending the session or removing its
@@ -145,11 +150,11 @@ export function createMilestoneWorker({
         continue
       }
       const files = await readTaskList(list.dir)
-      if (files.length === 0 && !lastTasks.has(list.listId)) await replayFinished(list)
+      if (files.length === 0 && !lastTasks.has(list.listId)) await replayFinished(roots, list)
       const tasks = currentTasks(list.listId, files)
       // A team creates its list when it starts, and most stay empty; they are not looked up.
       if (tasks.length === 0) continue
-      const head = await headOf(list.listId)
+      const head = await headOf(roots, list.listId)
       if (!head?.cwd) continue
       sessions.push({ ...list, cwd: head.cwd, ...(await goalOf(list.listId, head, tasks)) })
     }
@@ -239,8 +244,7 @@ export function createMilestoneWorker({
   const sendOffer = createNextSender({
     readOffers: async () => (await readOrca(cli, runCli, readers)).offers ?? [],
     run: runArgs,
-    grantRest: (sessionId) => grants.grant(sessionId),
-    restart: createRestarter({ home, run: runArgs, readLaunch: readers.readLaunch, readScreen: (handle) => readTerminalScreen(runArgs, handle) })
+    sendPrompt: sendToLane
   })
 
   /** Sends the prompt of a pressed button to its agent; the panel shows what went wrong. */
@@ -272,9 +276,6 @@ export function createMilestoneWorker({
     started ??= (async () => {
       await mkdir(tasksRoot, { recursive: true })
       await mkdir(progressRoot, { recursive: true })
-      watchDir(tasksRoot, (_event, name) => {
-        if (name && !String(name).endsWith('.lock')) schedule()
-      })
       watchDir(progressRoot, () => schedule())
       setInterval(() => schedule(true), SYNC_MS)
       await refresh(true)
