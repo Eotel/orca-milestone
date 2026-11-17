@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { createLaneSender } from '../src/lane-send.mjs'
 import { createMilestoneWorker } from '../src/milestone-worker.mjs'
-import { SESSION_A, makeHome, task, writeTasks, writeTranscript } from './helpers.mjs'
+import { SESSION_A, SESSION_B, makeHome, task, writeTasks, writeTranscript } from './helpers.mjs'
 
 const agent = (extra = {}) => ({ agentType: 'claude', state: 'done', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: 'できました', ...extra })
 const steps = [
@@ -74,6 +74,19 @@ test('the next steps are the unfinished tasks of the session, the one in progres
   await writeTasks(home, SESSION_A, steps.map((step) => ({ ...step, status: 'completed' })))
   await worker.refresh()
   assert.ok(!orca.shown().includes('data-next'), 'nothing left to do, no cards')
+})
+
+test('a workspace with the task lists of two running sessions offers no cards, since a press could reach the other one', async () => {
+  const home = await makeHome()
+  await runningSession(home, [])
+  await writeTasks(home, SESSION_A, steps)
+  await writeTranscript(home, SESSION_B, { cwd: '/work/app', prompt: 'Go', running: false })
+  await writeFile(join(home, '.claude', 'sessions', '2.json'), JSON.stringify({ pid: process.pid, sessionId: SESSION_B, cwd: '/work/app' }))
+  await writeTasks(home, SESSION_B, [task(1, '別の作業', 'pending')])
+  const { orca, worker } = workerFor(home, [agent()])
+  await worker.refresh(true)
+  assert.ok(orca.shown().includes('別の作業'), 'the lists still show')
+  assert.ok(!orca.shown().includes('data-next'))
 })
 
 test('a pressed next step goes to the lane through send, after stashing a Claude draft', async () => {

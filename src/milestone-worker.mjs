@@ -68,7 +68,11 @@ export function createMilestoneWorker({
   const readersFor = (sessions) => ({
     // Orca calls an agent working while its background shells run, even after its turn.
     readTurnEnded: createPendingReader(home, turnEnded),
-    readTasks: async (path) => sessions.find((session) => session.cwd && isInside(session.cwd, path))?.tasks ?? []
+    // With two lists in a workspace, the agent a card reaches may not be the one whose steps it shows.
+    readTasks: async (path) => {
+      const inside = sessions.filter((session) => session.cwd && isInside(session.cwd, path))
+      return inside.length === 1 ? inside[0].tasks : []
+    }
   })
   let lastHtml = null
   let started = null
