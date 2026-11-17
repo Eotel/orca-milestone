@@ -95,9 +95,6 @@ code { font-size: 12px; }
 .action:active { transform: scale(0.98); }
 .action:focus-visible { outline: 1px solid var(--orca-foreground); outline-offset: 1px; }
 .action .label { font-weight: 600; }
-.action .reason { font-size: 12px; }
-.action .prompt { font-size: 11px; color: var(--orca-muted-foreground);
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .next.busy .action, .next.busy .submit { cursor: default; }
 .next.busy .action:not(.sending) { opacity: 0.55; }
 .next.settling .action, .next.settling .submit { opacity: 0.55; cursor: default; }

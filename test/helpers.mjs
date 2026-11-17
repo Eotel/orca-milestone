@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -21,8 +21,8 @@ export async function writeTasks(home, sessionId, tasks) {
 let fakePid = 1000
 
 /** Registers a session as running the way Claude does, with this test process as its pid. */
-export async function markRunning(home, sessionId) {
-  const dir = join(home, '.claude', 'sessions')
+export async function markRunning(home, sessionId, configDir = join(home, '.claude')) {
+  const dir = join(configDir, 'sessions')
   await mkdir(dir, { recursive: true })
   fakePid += 1
   const file = join(dir, `${fakePid}.json`)
@@ -30,9 +30,9 @@ export async function markRunning(home, sessionId) {
   return file
 }
 
-export async function writeTranscript(home, sessionId, { cwd, gitBranch = 'main', prompt, running = true, extra = [] }) {
-  if (running) await markRunning(home, sessionId)
-  const dir = join(home, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'))
+export async function writeTranscript(home, sessionId, { cwd, gitBranch = 'main', prompt, running = true, extra = [], configDir = join(home, '.claude') }) {
+  if (running) await markRunning(home, sessionId, configDir)
+  const dir = join(configDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'))
   await mkdir(dir, { recursive: true })
   const lines = [
     { type: 'mode', sessionId },
@@ -44,6 +44,21 @@ export async function writeTranscript(home, sessionId, { cwd, gitBranch = 'main'
   const path = join(dir, `${sessionId}.jsonl`)
   await writeFile(path, lines.map((line) => JSON.stringify(line)).join('\n') + '\n')
   return path
+}
+
+/**
+ * The CLAUDE_CONFIG_DIR Orca gives one of its Claude accounts. Orca links its tasks and projects to
+ * ~/.claude's; `linked: false` gives it folders of its own.
+ */
+export async function orcaAccount(home, id, { linked = true } = {}) {
+  const configDir = join(home, 'Library', 'Application Support', 'orca', 'claude-profiles', id, 'home')
+  await mkdir(join(configDir, 'sessions'), { recursive: true })
+  for (const name of ['tasks', 'projects']) {
+    if (!linked) continue
+    await mkdir(join(home, '.claude', name), { recursive: true })
+    await symlink(join(home, '.claude', name), join(configDir, name))
+  }
+  return configDir
 }
 
 export function task(id, subject, status, extra = {}) {

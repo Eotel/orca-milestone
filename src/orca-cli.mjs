@@ -136,6 +136,7 @@ export async function readWorkspaces(cli, run = runOrca, readers = {}) {
         since: agent.stateStartedAt ?? null
       }))
     ),
-    offers: await offersOf(worktrees, offerReaders)
+    offers: await offersOf(worktrees, offerReaders),
+    worktrees
   }
 }

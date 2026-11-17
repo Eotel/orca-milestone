@@ -71,11 +71,11 @@ test('a Codex launch gets the progress tool, keeping the rest of its command lin
   assert.equal(command.match(/'/g).length % 2, 0, 'the quotes balance')
 })
 
-test('both agents are told to end with the buttons, on one line of the command', () => {
+test('neither agent is told to end its reply with a block for the panel, and each command stays one line', () => {
   const hook = createLaunchHook(paths)
   for (const agent of ['claude', 'codex']) {
     const { command } = hook({ agent, command: agent, env: {} }, (event) => event)
-    assert.ok(command.includes('whose info string is next'), agent)
+    assert.ok(!/fenced code block|info string/.test(command), agent)
     assert.ok(!command.includes('\n'), `${agent} is typed into a terminal, where a newline is Enter`)
     assert.equal(command.match(/'/g).length % 2, 0, 'the quotes balance')
   }
@@ -91,12 +91,8 @@ test('withTaskInstructions keeps the command line and leaves existing instructio
   const command = withTaskInstructions("/bin/claude --teammate-mode auto 'do it'")
   assert.ok(command.startsWith('/bin/claude --append-system-prompt '))
   assert.ok(command.endsWith(" --teammate-mode auto 'do it'"))
-  assert.equal(command.match(/'/g).length, 6, 'the instructions and the settings hold no quote of their own')
-  const settings = JSON.parse(command.match(/ --settings '([^']*)'/)[1])
-  const [{ matcher, hooks: [hook] }] = settings.hooks.PermissionRequest
-  assert.equal(matcher, '*')
-  assert.ok(hook.command.startsWith('ELECTRON_RUN_AS_NODE=1 ') && hook.command.endsWith('permission-hook.mjs"'), hook.command)
-  assert.ok(!withTaskInstructions("claude --settings '{}'").includes('PermissionRequest'), 'settings of the user stay theirs alone')
+  assert.equal(command.match(/'/g).length, 4, 'the instructions hold no quote of their own')
+  assert.ok(!command.includes('--settings'), 'no permission hook: the panel answers no permission')
 
   for (const untouched of ['env X=1 claude', 'claudette', "claude --append-system-prompt 'mine'", 'claude --append-system-prompt-file /f']) {
     assert.equal(withTaskInstructions(untouched), untouched)
