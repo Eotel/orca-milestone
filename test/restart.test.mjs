@@ -45,19 +45,19 @@ test('the input box is read from the screen, and its gray suggestion counts as e
   assert.equal(suggestionFrom(`${painted}\x1b[H\r\x1b[2C\x1b[69Babc`), null)
 })
 
-const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
-const claude = (extra = {}) => ({ agentType: 'claude', state: 'done', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 5, lastAssistantMessage: reply, ...extra })
+const steps = [{ id: '1', subject: 'A', status: 'pending' }]
+const claude = (extra = {}) => ({ agentType: 'claude', state: 'done', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 5, ...extra })
 
 test('a waiting session told something older gets a restart card after its proposals, on screen only', async () => {
   const launch = { sessionId: SESSION, pid: 1, args: OLD_ARGS }
-  const offer = nextOffer({ path: '/w', agents: [claude()] }, launch)
+  const offer = nextOffer({ path: '/w', agents: [claude()] }, launch, steps)
   assert.deepEqual(offer.suggestions.map((s) => [s.label, s.action]), [['A', undefined], ['最新の指示で再開', 'restart']])
   assert.equal(offer.sessionId, SESSION)
-  assert.notEqual(offer.id, nextOffer({ path: '/w', agents: [claude()] }).id)
-  assert.deepEqual(nextOffer({ path: '/w', agents: [claude({ lastAssistantMessage: 'hi' })] }, launch).suggestions.map((s) => s.action), ['restart'])
-  assert.equal(nextOffer({ path: '/w', agents: [claude({ lastAssistantMessage: 'hi', background: true })] }, launch), null, 'not with shells in the background')
+  assert.notEqual(offer.id, nextOffer({ path: '/w', agents: [claude()] }, null, steps).id)
+  assert.deepEqual(nextOffer({ path: '/w', agents: [claude()] }, launch).suggestions.map((s) => s.action), ['restart'])
+  assert.equal(nextOffer({ path: '/w', agents: [claude({ background: true })] }, launch), null, 'not with shells in the background')
   const readLaunch = async () => launch
-  const shown = async (worktree) => (await offersOf([worktree], { readLaunch }))[0]?.suggestions.map((s) => s.label)
+  const shown = async (worktree) => (await offersOf([worktree], { readLaunch, readTasks: async () => steps }))[0]?.suggestions.map((s) => s.label)
   assert.deepEqual(await shown({ path: '/w', isActive: true, agents: [claude()] }), ['A', '最新の指示で再開'])
   assert.deepEqual(await shown({ path: '/w', agents: [claude()] }), ['A'], 'a workspace off screen is not read')
   assert.deepEqual(await shown({ path: '/w', isActive: true, agents: [claude({ agentType: 'codex' })] }), ['A'])
@@ -122,7 +122,7 @@ test('a session that does not exit is left as it was, and one that does not come
 })
 
 test('the sender hands a restart card to the restarter once, and lets it be pressed again after a refusal', async () => {
-  const offer = nextOffer({ path: '/w', agents: [claude()] }, { sessionId: SESSION })
+  const offer = nextOffer({ path: '/w', agents: [claude()] }, { sessionId: SESSION }, steps)
   const answers = [{ sent: false, reason: 'draft' }, { sent: true }]
   const pressed = []
   const send = createNextSender({

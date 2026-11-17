@@ -4,10 +4,15 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { createLaneSender } from '../src/lane-send.mjs'
 import { createMilestoneWorker } from '../src/milestone-worker.mjs'
-import { SESSION_A, makeHome, writeTranscript } from './helpers.mjs'
+import { SESSION_A, makeHome, task, writeTasks, writeTranscript } from './helpers.mjs'
 
-const reply = 'できました\n```next\n[{"label":"PR を作る","prompt":"PR を作ってください"}]\n```'
-const agent = (extra = {}) => ({ agentType: 'claude', state: 'done', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: reply, ...extra })
+const agent = (extra = {}) => ({ agentType: 'claude', state: 'done', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: 'できました', ...extra })
+const steps = [
+  task(1, '今の検索 API を調べる', 'completed'),
+  task(2, 'テストを書く', 'pending', { blockedBy: ['3'] }),
+  task(3, 'フィルターの UI を作る', 'in_progress'),
+  task(4, 'PR を作る', 'pending')
+]
 const terminal = { handle: 'term_lane', tabId: 'tab', leafId: 'leaf', writable: true }
 
 function fakeOrca() {
@@ -49,21 +54,37 @@ test('the panel offers no question, permission or restart cards, only the propos
   assert.ok(!permission.orca.shown().includes('許可しますか'))
 
   // This test process was not started with the plugin's instructions, which upstream offers to restart.
+  await writeTasks(home, SESSION_A, steps)
   const done = workerFor(home, [agent()])
   await done.worker.refresh(true)
-  assert.ok(done.orca.shown().includes('PR を作る'))
+  assert.ok(done.orca.shown().includes('data-next'))
   assert.ok(!done.orca.shown().includes('最新の指示で再開'))
+})
+
+test('the next steps are the unfinished tasks of the session, the one in progress first and none still blocked', async () => {
+  const home = await makeHome()
+  await runningSession(home, [])
+  await writeTasks(home, SESSION_A, steps)
+  const { orca, worker } = workerFor(home, [agent({ lastAssistantMessage: 'できました\n```next\n[{"label":"別の作業","prompt":"別の作業をして"}]\n```' })])
+  await worker.refresh(true)
+  const cards = [...orca.shown().matchAll(/class="action"[^>]*><span class="label">([^<]+)</g)].map((match) => match[1])
+  assert.deepEqual(cards, ['フィルターの UI を作る', 'PR を作る'])
+
+  await writeTasks(home, SESSION_A, steps.map((step) => ({ ...step, status: 'completed' })))
+  await worker.refresh(true)
+  assert.ok(!orca.shown().includes('data-next'), 'nothing left to do, no cards')
 })
 
 test('a pressed next step goes to the lane through send, after stashing a Claude draft', async () => {
   const home = await makeHome()
   await runningSession(home, [])
+  await writeTasks(home, SESSION_A, steps)
   const lane = []
   const { orca, worker, keys } = workerFor(home, [agent()], { sendToLane: async (handle, prompt) => lane.push([handle, prompt]) })
   await worker.refresh(true)
   const offer = orca.shown().match(/data-next="([0-9a-f]+)"/)[1]
   assert.deepEqual(await worker.sendNext({ offer, index: 0 }), { sent: true })
-  assert.deepEqual(lane, [['term_lane', 'PR を作ってください']])
+  assert.deepEqual(lane, [['term_lane', '「フィルターの UI を作る」を進めてください']])
   assert.deepEqual(keys, ['\u0013'])
 })
 

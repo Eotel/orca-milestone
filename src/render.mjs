@@ -5,7 +5,6 @@ const GOAL_MAX = 160
 const SUBJECT_MAX = 200
 // A row with more tasks than this may need scrolling, so the pointer can enter its expansion.
 const ROW_TASKS_SHORT = 8
-const PROMPT_LINES_MAX = 300
 // What a call waiting for permission would do, as src/risk.mjs tells it.
 const RISK_LABELS = { read: '読むだけ', write: '書き換える', outside: '外に出る' }
 
@@ -91,7 +90,7 @@ function renderNext(offer) {
   } else {
     heading = '<h2>次の作業<span>選ばなくても構いません</span></h2>'
     const cards = offer.suggestions.map((s, index) =>
-      card(offer.id, index, s.label, s.action === 'restart' ? [['detail', s.detail]] : [['reason', s.reason], ['prompt', clip(s.prompt, PROMPT_LINES_MAX)]])
+      card(offer.id, index, s.label, [['detail', s.detail]])
     )
     body = `<ol class="actions">${cards.join('')}</ol>`
   }

@@ -20,7 +20,7 @@ import {
   turnEnded
 } from './claude-sessions.mjs'
 import { readCodexProgress } from './codex-progress.mjs'
-import { buildModel } from './model.mjs'
+import { buildModel, isInside } from './model.mjs'
 import { createLaneSender } from './lane-send.mjs'
 import { createNextSender } from './next-actions.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
@@ -61,13 +61,14 @@ export function createMilestoneWorker({
   let agents = []
   let offers = []
   const runArgs = (args, timeout) => runCli(cli, args, timeout)
-  // Only the proposed next steps become cards. Agents ask through triage-notify and run without
+  // Only the steps left in a task list become cards. Agents ask through triage-notify and run without
   // permission prompts, and a restart would go around the lane tools, so the readers for questions,
   // permissions and restarts are left out and offersOf finds none of those.
-  const readers = {
+  const readersFor = (sessions) => ({
     // Orca calls an agent working while its background shells run, even after its turn.
-    readTurnEnded: createPendingReader(home, turnEnded)
-  }
+    readTurnEnded: createPendingReader(home, turnEnded),
+    readTasks: async (path) => sessions.find((session) => session.cwd && isInside(session.cwd, path))?.tasks ?? []
+  })
   let lastHtml = null
   let started = null
   let timer = null
@@ -202,16 +203,16 @@ export function createMilestoneWorker({
   }
 
   async function refreshOnce(askOrca) {
+    const sessions = await allSessions()
     if (askOrca || !workspace) {
       try {
         let found
-        ;({ active: workspace, agents, offers: found } = await readOrca(cli, runCli, readers))
+        ;({ active: workspace, agents, offers: found } = await readOrca(cli, runCli, readersFor(sessions)))
         offers = found ?? []
       } catch (error) {
         orca.log(`milestone: could not read the workspaces: ${error.message}`)
       }
     }
-    const sessions = await allSessions()
     publish(renderBody(buildModel(workspace, sessions, agents, offers)))
   }
 
@@ -242,7 +243,7 @@ export function createMilestoneWorker({
   }
 
   const sendOffer = createNextSender({
-    readOffers: async () => (await readOrca(cli, runCli, readers)).offers ?? [],
+    readOffers: async () => (await readOrca(cli, runCli, readersFor(await allSessions()))).offers ?? [],
     run: runArgs,
     sendPrompt: sendToLane
   })

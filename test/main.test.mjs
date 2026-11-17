@@ -71,11 +71,11 @@ test('a Codex launch gets the progress tool, keeping the rest of its command lin
   assert.equal(command.match(/'/g).length % 2, 0, 'the quotes balance')
 })
 
-test('both agents are told to end with the buttons, on one line of the command', () => {
+test('neither agent is told to end its reply with a block for the panel, and each command stays one line', () => {
   const hook = createLaunchHook(paths)
   for (const agent of ['claude', 'codex']) {
     const { command } = hook({ agent, command: agent, env: {} }, (event) => event)
-    assert.ok(command.includes('whose info string is next'), agent)
+    assert.ok(!/fenced code block|info string/.test(command), agent)
     assert.ok(!command.includes('\n'), `${agent} is typed into a terminal, where a newline is Enter`)
     assert.equal(command.match(/'/g).length % 2, 0, 'the quotes balance')
   }

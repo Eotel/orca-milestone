@@ -226,14 +226,14 @@ test('allowing a dangerous command takes a second press, which sends it confirme
 test('a Claude agent Orca calls working but whose turn is over waits, with its proposals', async () => {
   const { readWorkspaces } = await import('../src/orca-cli.mjs')
   const { turnEnded } = await import('../src/claude-sessions.mjs')
-  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
-  const busy = { agentType: 'claude', state: 'working', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: reply }
+  const readTasks = async () => [{ id: '1', subject: 'A', status: 'pending' }]
+  const busy = { agentType: 'claude', state: 'working', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7 }
   const worktrees = [
     { path: '/a', displayName: 'a', isActive: true, agents: [busy] },
     { path: '/b', displayName: 'b', agents: [{ ...busy, paneKey: 'tab:b' }] }
   ]
   const run = async () => ({ ok: true, result: { worktrees } })
-  const read = await readWorkspaces('orca', run, { readTurnEnded: async (path) => path === '/a' })
+  const read = await readWorkspaces('orca', run, { readTurnEnded: async (path) => path === '/a', readTasks })
   assert.deepEqual(read.active.agentStates, ['done'])
   assert.equal(read.active.background, true)
   assert.deepEqual(read.agents.map((agent) => [agent.path, agent.state, agent.background]), [['/a', 'done', true], ['/b', 'working', false]])
@@ -253,10 +253,10 @@ test('a Claude agent Orca calls working but whose turn is over waits, with its p
 test('each turn of an agent with shells in the background gets cards of its own', async () => {
   const { readWorkspaces } = await import('../src/orca-cli.mjs')
   const { turnEnded } = await import('../src/claude-sessions.mjs')
-  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
-  const busy = { agentType: 'claude', state: 'working', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: reply }
+  const readTasks = async () => [{ id: '1', subject: 'A', status: 'pending' }]
+  const busy = { agentType: 'claude', state: 'working', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7 }
   const run = async () => ({ ok: true, result: { worktrees: [{ path: '/a', displayName: 'a', agents: [busy] }] } })
-  const turn = async (at) => (await readWorkspaces('orca', run, { readTurnEnded: async () => at }))
+  const turn = async (at) => (await readWorkspaces('orca', run, { readTurnEnded: async () => at, readTasks }))
   const first = await turn(1_000)
   const second = await turn(2_000)
   assert.notEqual(first.offers[0].id, second.offers[0].id, 'a card pressed in one turn leaves the next one usable')
@@ -281,10 +281,10 @@ test('a turn stays over after compacting while idle, and Orca saying the agent i
   assert.equal(turnEnded([ended, ...compacted].join('\n')), Date.parse('2026-11-13T06:40:43.000Z'))
   assert.equal(turnEnded([ended, ...compacted, entry({ type: 'user', message: { role: 'user', content: 'next' } })].join('\n')), null)
 
-  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
-  const busy = { agentType: 'claude', state: 'working', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: reply, mainAgent: { state: 'done', stateStartedAt: 3_000 } }
+  const readTasks = async () => [{ id: '1', subject: 'A', status: 'pending' }]
+  const busy = { agentType: 'claude', state: 'working', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, mainAgent: { state: 'done', stateStartedAt: 3_000 } }
   const run = async () => ({ ok: true, result: { worktrees: [{ path: '/a', displayName: 'a', agents: [busy] }] } })
-  const read = await readWorkspaces('orca', run, { readTurnEnded: async () => { throw new Error('not read') } })
+  const read = await readWorkspaces('orca', run, { readTurnEnded: async () => { throw new Error('not read') }, readTasks })
   assert.deepEqual(read.agents.map((agent) => [agent.state, agent.background, agent.since]), [['done', true, 3_000]])
   assert.equal(read.offers.length, 1)
   const still = await readWorkspaces('orca', async () => ({ ok: true, result: { worktrees: [{ path: '/a', displayName: 'a', agents: [{ ...busy, mainAgent: { state: 'working', stateStartedAt: 3_000 } }] }] } }))
@@ -293,9 +293,9 @@ test('a turn stays over after compacting while idle, and Orca saying the agent i
 
 test('in an agent team, the lead stands for the workspace and its teammates go under it', async () => {
   const { readWorkspaces, joinTeams, mayHoldTeam } = await import('../src/orca-cli.mjs')
-  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
+  const readTasks = async () => [{ id: '1', subject: 'A', status: 'pending' }]
   const claude = (leaf, extra = {}) => ({ agentType: 'claude', state: 'done', paneKey: `tab:${leaf}`, hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: '届いた通知は新しい依頼ではありません', ...extra })
-  const lead = claude('lead', { lastAssistantMessage: reply })
+  const lead = claude('lead')
   const worktree = { path: '/a', displayName: 'a', isActive: true, agents: [claude('mate1'), lead, claude('mate2', { state: 'working' })] }
   const terminals = [
     { tabId: 'tab', leafId: 'lead', agentIdentity: 'claude-agent-teams' },
@@ -303,7 +303,7 @@ test('in an agent team, the lead stands for the workspace and its teammates go u
     { tabId: 'tab', leafId: 'mate2', agentIdentity: null }
   ]
   const run = async (cli, args) => ({ ok: true, result: args[0] === 'terminal' ? { terminals } : { worktrees: [worktree] } })
-  const read = await readWorkspaces('orca', run)
+  const read = await readWorkspaces('orca', run, { readTasks })
   assert.deepEqual(read.active.agentStates, ['done'], 'a teammate at work does not make the lead busy')
   assert.equal(read.agents.length, 1)
   assert.deepEqual(read.offers.map((offer) => [offer.paneKey, offer.suggestions[0].label]), [['tab:lead', 'A']])

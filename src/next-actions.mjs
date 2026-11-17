@@ -1,5 +1,5 @@
 // What an agent offers the user to choose from in the panel, and sending the choice:
-// - a proposal: the next steps it wrote at the end of its reply (the block the launch hook asks for)
+// - a proposal: the steps left in its task list, so its reply carries nothing for the panel
 // - a question: Claude Code's AskUserQuestion, as cards, or as a form for several questions or answers
 // - a permission: a tool waiting to be allowed, in Claude Code or Codex
 // - a restart: a waiting Claude session told something older than the plugin says now, see restart.mjs
@@ -17,14 +17,13 @@ export { isDangerous }
 const SUGGESTIONS_MAX = 3
 const LABEL_MAX = 30
 const PROMPT_MAX = 300
-const REASON_MAX = 80
+const OPEN_STEPS = new Set(['pending', 'in_progress'])
 const QUESTION_MAX = 300
 const OPTION_MAX = 60
 const DETAIL_MAX = 200
 // One key each: the menu takes the number of an option as a single key press.
 const OPTIONS_MAX = 9
 const QUESTIONS_MAX = 4
-const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
 const TRACKED_AGENTS = new Set(['claude', 'codex'])
 const PERMISSION_STATES = ['waiting', 'permission']
@@ -60,36 +59,15 @@ function shorten(text, max) {
   return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : chars.join('')
 }
 
-function isSuggestion(value) {
-  if (typeof value?.label !== 'string' || typeof value?.prompt !== 'string') return false
-  const label = value.label.trim()
-  const prompt = value.prompt.trim()
-  if (!label || !prompt || CONTROL.test(label) || CONTROL.test(prompt)) return false
-  // The prompt goes on a command line as the value of an option.
-  return [...label].length <= LABEL_MAX && [...prompt].length <= PROMPT_MAX && !prompt.startsWith('-')
-}
-
-/** Optional, and only shown: a bad one costs the reason, not the button. */
-function reasonOf(reason) {
-  if (typeof reason !== 'string' || !reason.trim() || CONTROL.test(reason)) return ''
-  return shorten(reason, REASON_MAX)
-}
-
-/** The buttons of a reply, or none when its last thing is not a valid next block. */
-export function parseSuggestions(message) {
-  const block = NEXT_BLOCK.exec(message ?? '')
-  if (!block) return []
-  let list
-  try {
-    list = JSON.parse(block[1])
-  } catch {
-    return []
-  }
-  if (!Array.isArray(list)) return []
-  return list
-    .filter(isSuggestion)
+/** The steps of a task list still to do, the one in progress first, without those still waiting on another. */
+function stepSuggestions(tasks) {
+  const open = tasks.filter((task) => OPEN_STEPS.has(task.status) && !CONTROL.test(shorten(task.subject, PROMPT_MAX)))
+  const unfinished = new Set(open.map((task) => task.id))
+  return open
+    .filter((task) => !(task.blockedBy ?? []).some((id) => unfinished.has(id)))
+    .sort((a, b) => (b.status === 'in_progress') - (a.status === 'in_progress'))
     .slice(0, SUGGESTIONS_MAX)
-    .map(({ label, prompt, reason }) => ({ label: label.trim(), prompt: prompt.trim(), reason: reasonOf(reason) }))
+    .map((task) => ({ label: shorten(task.subject, LABEL_MAX), prompt: shorten(`「${task.subject}」を進めてください`, PROMPT_MAX) }))
 }
 
 /**
@@ -119,15 +97,18 @@ const RESTART_CARD = { label: '最新の指示で再開', action: 'restart', det
  * What a workspace's agent proposes now: only one that finished its turn. A Claude session told
  * something older gets one more card, to start it again under what the plugin says now.
  * @param launch { sessionId } of that session, or null
+ * @param tasks  the task list of the workspace's newest session
  */
-export function nextOffer(worktree, launch = null) {
+export function nextOffer(worktree, launch = null, tasks = []) {
   const agent = soleAgent(worktree)
   if (agent?.state !== 'done') return null
-  const suggestions = parseSuggestions(agent.lastAssistantMessage)
+  const suggestions = stepSuggestions(tasks)
   const restart = launch && agent.agentType === 'claude' && !agent.background
   if (restart) suggestions.push(RESTART_CARD)
   if (suggestions.length === 0) return null
-  return { ...base('proposal', worktree, agent, restart ? launch.sessionId : ''), suggestions, ...(restart ? { sessionId: launch.sessionId } : {}) }
+  // Another set of steps is another offer, so a card pressed after the list changed does nothing.
+  const extra = [restart ? launch.sessionId : '', ...suggestions.map((suggestion) => suggestion.prompt ?? '')].join('\n')
+  return { ...base('proposal', worktree, agent, extra), suggestions, ...(restart ? { sessionId: launch.sessionId } : {}) }
 }
 
 /** Only for the workspace on screen, the one whose cards show, and only while Claude waits idle. */
@@ -326,12 +307,13 @@ async function codexPermissionOffer(worktree, readPane) {
  * @param readLaunch   resolves a workspace path to its Claude session told something older, see restart.mjs
  * @param readLaunchInfo resolves a workspace path to its Claude session and command line, see restart.mjs
  * @param readAllowed  resolves a session id to what the rest of its turn allowed, see turn-grant.mjs
+ * @param readTasks    resolves a workspace path to the task list of its newest session
  */
-export async function offersOf(worktrees, { readQuestion = async () => null, readCall = async () => null, readPane = async () => null, readLaunch = async () => null, readLaunchInfo = async () => null, readAllowed = async () => [] } = {}) {
+export async function offersOf(worktrees, { readQuestion = async () => null, readCall = async () => null, readPane = async () => null, readLaunch = async () => null, readLaunchInfo = async () => null, readAllowed = async () => [], readTasks = async () => [] } = {}) {
   const offers = []
   for (const worktree of worktrees) {
     const offer =
-      nextOffer(worktree, await launchOf(worktree, readLaunch)) ??
+      nextOffer(worktree, await launchOf(worktree, readLaunch), await readTasks(worktree.path)) ??
       (await questionOffer(worktree, readQuestion)) ??
       (await permissionOffer(worktree, readCall, readPane, readLaunchInfo)) ??
       (await codexPermissionOffer(worktree, readPane))
