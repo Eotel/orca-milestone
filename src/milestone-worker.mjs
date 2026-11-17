@@ -22,7 +22,7 @@ import {
 import { readCodexProgress } from './codex-progress.mjs'
 import { buildModel, isInside } from './model.mjs'
 import { createLaneSender } from './lane-send.mjs'
-import { createNextSender } from './next-actions.mjs'
+import { createNextSender, offersOf } from './next-actions.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
 import { progressDir } from './progress-server.mjs'
 import { renderBody } from './render.mjs'
@@ -60,6 +60,7 @@ export function createMilestoneWorker({
   let workspace = null
   let agents = []
   let offers = []
+  let worktrees = []
   const runArgs = (args, timeout) => runCli(cli, args, timeout)
   // Only the steps left in a task list become cards. Agents ask through triage-notify and run without
   // permission prompts, and a restart would go around the lane tools, so the readers for questions,
@@ -207,11 +208,14 @@ export function createMilestoneWorker({
     if (askOrca || !workspace) {
       try {
         let found
-        ;({ active: workspace, agents, offers: found } = await readOrca(cli, runCli, readersFor(sessions)))
+        ;({ active: workspace, agents, offers: found, worktrees = [] } = await readOrca(cli, runCli, readersFor(sessions)))
         offers = found ?? []
       } catch (error) {
         orca.log(`milestone: could not read the workspaces: ${error.message}`)
       }
+    } else {
+      // Only the tasks changed: the cards follow them without asking Orca again.
+      offers = await offersOf(worktrees, readersFor(sessions))
     }
     publish(renderBody(buildModel(workspace, sessions, agents, offers)))
   }

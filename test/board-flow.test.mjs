@@ -70,8 +70,9 @@ test('the next steps are the unfinished tasks of the session, the one in progres
   const cards = [...orca.shown().matchAll(/class="action"[^>]*><span class="label">([^<]+)</g)].map((match) => match[1])
   assert.deepEqual(cards, ['フィルターの UI を作る', 'PR を作る'])
 
+  // A task file changing asks Orca nothing; the cards follow the tasks all the same.
   await writeTasks(home, SESSION_A, steps.map((step) => ({ ...step, status: 'completed' })))
-  await worker.refresh(true)
+  await worker.refresh()
   assert.ok(!orca.shown().includes('data-next'), 'nothing left to do, no cards')
 })
 
