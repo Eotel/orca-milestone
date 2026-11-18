@@ -1,35 +1,26 @@
-// Orca plugin worker entry for orca-milestone: shows the Claude tasks of the focused workspace
-// as milestones in a right-sidebar panel.
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createLaunchHook } from './src/launch-hook.mjs'
 import { createMilestoneWorker } from './src/milestone-worker.mjs'
 import { resolveOrcaCli } from './src/orca-cli.mjs'
 
-export default function activate(orca) {
-  const worker = createMilestoneWorker({
-    orca,
-    home: homedir(),
-    cli: resolveOrcaCli()
-  })
+export default async function activate(orca) {
+  const { settings } = await orca.host.call('settings.get')
+  const worker = createMilestoneWorker({ orca, url: settings.boardUrl, cli: resolveOrcaCli() })
   orca.hooks.on(
     'agent.launch.before',
     createLaunchHook({ execPath: process.execPath, serverPath: join(import.meta.dirname, 'src', 'progress-server.mjs') })
   )
-  orca.panels.handle('view.get', () => worker.view())
+  orca.panels.handle('view.get', worker.view)
   orca.panels.handle('workspace.open', ({ path }) => worker.openWorkspace(path))
-  orca.panels.handle('next.send', (request) => worker.sendNext(request))
+  orca.panels.handle('next.send', worker.sendNext)
+  orca.panels.handle('ask.answer', worker.answerAsk)
+  orca.panels.handle('board.open', worker.openBoard)
   orca.commands.register('milestone.refresh', async () => {
-    await worker.start()
-    await worker.refresh(true)
+    await worker.refresh()
     return 'Milestones refreshed'
   })
-  orca.events.on('agent.status.changed', async (event) => {
-    await worker.start()
-    worker.agentChanged(event)
-  })
-  orca.events.on('workspace.changed', async () => {
-    await worker.start()
-    worker.schedule(true)
-  })
+  orca.commands.register('milestone.openTurn', worker.openTurn)
+  orca.events.on('agent.status.changed', worker.agentChanged)
+  orca.events.on('workspace.changed', worker.workspaceChanged)
+  await worker.start()
 }

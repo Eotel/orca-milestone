@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { readCodexProgress } from '../src/codex-progress.mjs'
 import { TOOL_NAME, handleMessage, progressDir } from '../src/progress-server.mjs'
 
 async function context() {
@@ -24,17 +22,17 @@ test('the server answers the MCP handshake and lists its tool', async () => {
   assert.equal(handleMessage({ id: 3, method: 'nope' }, ctx).error.code, -32601)
 })
 
-test('a recorded plan is read back as a list while its session runs', async () => {
+test('a recorded plan writes the progress file consumed by the core, with no temporary file left', async () => {
   const ctx = await context()
   const tasks = [{ subject: 'Read', status: 'completed' }, { subject: 'Write', status: 'in_progress' }]
   const answer = handleMessage(call({ goal: 'Ship', tasks }), ctx)
   assert.equal(answer.result.isError, false)
   assert.deepEqual(await readdir(ctx.dir), ['codex-4242.json'], 'no temporary file stays')
 
-  const lists = await readCodexProgress(ctx.dir, { running: (pid) => pid === 4242 })
-  assert.deepEqual(lists, [
+  const recorded = JSON.parse(await readFile(join(ctx.dir, 'codex-4242.json'), 'utf8'))
+  assert.deepEqual(recorded,
     {
-      listId: 'codex-4242',
+      pid: 4242,
       cwd: '/work/app',
       goal: 'Ship',
       updatedAt: 1000,
@@ -43,16 +41,7 @@ test('a recorded plan is read back as a list while its session runs', async () =
         { id: '2', subject: 'Write', status: 'in_progress' }
       ]
     }
-  ])
-})
-
-test('a list of an ended session goes away with its file, and a broken file is skipped', async () => {
-  const ctx = await context()
-  handleMessage(call({ goal: 'Ship', tasks: [] }), ctx)
-  await writeFile(join(ctx.dir, 'codex-1.json'), '{ not json')
-  assert.deepEqual(await readCodexProgress(ctx.dir, { running: () => false }), [])
-  assert.ok(!existsSync(join(ctx.dir, 'codex-4242.json')))
-  assert.deepEqual(await readCodexProgress('/no/such/dir'), [])
+  )
 })
 
 test('bad arguments are reported to the agent and record nothing', async () => {

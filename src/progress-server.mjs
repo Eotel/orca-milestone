@@ -1,7 +1,3 @@
-// A small MCP server that gives Codex a tool to record its plan. Codex offers no task list of its
-// own, so this file is what the panel reads. Codex starts one per session as a child process, so
-// the parent is the session: its id names the file and tells the worker when the session ended.
-// It speaks newline-delimited JSON-RPC over stdio and needs no dependencies.
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -60,7 +56,6 @@ function record(args, { dir, pid, cwd, now }) {
   mkdirSync(dir, { recursive: true })
   const file = join(dir, `codex-${pid}.json`)
   const body = { pid, cwd, goal: args.goal.slice(0, GOAL_MAX), updatedAt: now(), tasks }
-  // Replaced by rename, so the worker never reads half a file.
   writeFileSync(`${file}.tmp`, JSON.stringify(body))
   renameSync(`${file}.tmp`, file)
 }

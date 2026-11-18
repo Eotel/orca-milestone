@@ -1,127 +1,93 @@
-/* Panels only get Orca's neutral tokens, so the status hues are Orca's own Tailwind v4 values
-   copied from its sources: the bars are the green-600 of its merge button, other greens the
-   emerald of the sidebar's status dot (done), orange is --agent-question (the task in progress,
-   waiting), yellow is --agent-working. Orca puts `dark` or `light` on the panel's <html>, which
-   picks the shade for each theme. */
-:root { color-scheme: light dark; --ms-bar: oklch(62.7% 0.194 149.214);
-  --ms-done: oklch(59.6% 0.145 163.225); --ms-todo: oklch(64.6% 0.222 41.116);
-  --ms-working: oklch(68.1% 0.162 75.834); --ms-track: color-mix(in oklch, var(--orca-foreground) 12%, transparent); }
+:root { --ms-bar: oklch(62.7% 0.194 149.214);
+  --ms-done: oklch(45% 0.1 163.225); --ms-todo: oklch(50% 0.15 41.116);
+  --ms-working: oklch(48% 0.13 75.834); --ms-ask: oklch(55% 0.17 27);
+  --ms-track: color-mix(in oklch, var(--orca-foreground) 12%, transparent); }
 html.dark { --ms-done: oklch(69.6% 0.17 162.48); --ms-todo: oklch(70.5% 0.213 47.604);
-  --ms-working: oklch(79.5% 0.184 86.047); --ms-track: color-mix(in oklch, var(--orca-foreground) 16%, transparent); }
-/* The panel never scrolls as a whole: the focused workspace scrolls by itself, which keeps the other
-   workspaces fixed to the bottom edge however long its list is, and however tall a row grows. */
-body { box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-end; height: 100vh; overflow: hidden;
+  --ms-working: oklch(79.5% 0.184 86.047); --ms-ask: oklch(72% 0.16 27);
+  --ms-track: color-mix(in oklch, var(--orca-foreground) 16%, transparent); }
+* { box-sizing: border-box; }
+body { display: flex; flex-direction: column; height: 100vh; overflow: hidden;
   margin: 0; padding: 12px; font: 13px/1.5 system-ui, sans-serif;
   color: var(--orca-foreground); background: var(--orca-background); }
-main { flex: 1 1 0; min-height: 0; overflow: auto; }
-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
-h1 { margin: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent { flex: none; font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
-.agent.working { color: var(--ms-working); }
-.agent.waiting { color: var(--ms-todo); }
-section { padding: 10px; margin-bottom: 10px; border: 1px solid var(--orca-border);
+main { flex: 1 1 0; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--orca-border) transparent; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+h1 { min-width: 0; margin: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+h2 { margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
+.agent { flex: 0 1 auto; min-width: 0; max-width: 60%; text-align: right; overflow-wrap: anywhere; font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
+.agent.working, .row.working .row-agent { color: var(--ms-working); }
+.agent.waiting, .agent.blocked, .row.waiting .row-agent { color: var(--ms-todo); }
+section { padding: 9px 12px; margin-bottom: 8px; border: 1px solid var(--orca-border);
   border-radius: var(--orca-radius, 6px); background: var(--orca-card); color: var(--orca-card-foreground); }
-.goal { margin: 0 0 8px; font-weight: 600; }
-.count { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; color: var(--orca-muted-foreground); }
+.ask-card { border-color: color-mix(in oklch, var(--ms-ask) 45%, var(--orca-border));
+  background: color-mix(in oklch, var(--ms-ask) 7%, var(--orca-card)); }
+.count { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); font-variant-numeric: tabular-nums; }
 .count strong { font-size: 12px; color: var(--ms-done); }
-.bar { height: 6px; margin: 4px 0 10px; border-radius: 3px; background: var(--ms-track); overflow: hidden; }
+.goal { margin: 4px 0 6px; font-weight: 600; overflow-wrap: anywhere; }
+.bar { height: 4px; margin: 6px 0; border-radius: 3px; background: var(--ms-track); overflow: hidden; }
 .bar > div { height: 100%; border-radius: 3px; background: var(--ms-bar); transition: width 400ms ease-out; }
 ol { margin: 0; padding: 0; list-style: none; }
-li { display: flex; gap: 8px; padding: 2px 0; transition: color 300ms ease-out; }
-li .mark { flex: none; width: 1em; text-align: center; font-weight: 700; color: var(--ms-todo); transition: color 300ms ease-out; }
-li.completed { color: var(--orca-muted-foreground); }
-li.completed .mark { color: var(--ms-done); }
-li.pending .mark { color: var(--orca-muted-foreground); }
-/* A background, because text-decoration cannot be drawn gradually. On an inline box it runs on
-   across wrapped lines. */
-li .strike { background: linear-gradient(currentColor, currentColor) 0 55% / 0 1px no-repeat; transition: background-size 400ms ease-out; }
-li.completed .strike { background-size: 100% 1px; }
-li.in_progress { font-weight: 600; }
-.empty { color: var(--orca-muted-foreground); }
-code { font-size: 12px; }
-.others { flex: none; padding-top: 12px; border-top: 1px solid var(--orca-border); }
-.others h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px;
-  font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
-.others h2 .attention { color: var(--ms-todo); }
-.rows { margin: 0; padding: 0; list-style: none; }
-/* Reversed, so a row grows upward from its head. The rows are anchored to the bottom edge, so the
-   head stays under the pointer and the rows above slide up. */
-.row { display: flex; flex-direction: column-reverse; gap: 0; padding: 0 6px; margin: 0 -6px; border-radius: 4px; }
-.row:has(.head:hover), .row:has(.head:focus-visible), .row.long:has(.detail:hover) { background: color-mix(in oklch, var(--orca-foreground) 7%, transparent); }
-.row .head { display: block; padding: 4px 6px; margin: 0 -6px; border-radius: 4px; cursor: pointer; user-select: none; }
-.row .head:focus-visible { outline: 1px solid var(--orca-foreground); outline-offset: -1px; }
-/* The head keeps a row open. Leaving it closes the row, which brings every row back to where it
-   was, so the pointer ends up on the row it was heading for. A long list is the exception: the
-   pointer may enter it to scroll. The delay on opening lets the pointer cross a row on its way
-   elsewhere without moving anything. */
-.row .detail { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; pointer-events: none;
-  transition: grid-template-rows 180ms ease-in-out, opacity 180ms ease-in-out, visibility 180ms; font-size: 12px; }
-.row.long .detail { pointer-events: auto; }
-.row .head:hover + .detail, .row .head:focus-visible + .detail, .row.long .detail:hover { grid-template-rows: 1fr; opacity: 1; visibility: visible;
-  transition-delay: 150ms; }
-.row .detail .inner { min-height: 0; max-height: 45vh; overflow: hidden auto; overscroll-behavior: contain; }
-.row .detail .goal { margin: 4px 0 4px 14px; }
-.row .detail ol { margin: 0 0 4px 14px; }
-.row .detail li { gap: 6px; }
-.row .top { display: flex; align-items: center; gap: 6px; }
-.row .dot { flex: none; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; background: var(--orca-muted-foreground); }
-.row.attention .dot, .row .dot.running { background: var(--ms-todo); }
-.row .check { flex: none; width: 8px; font-size: 11px; font-weight: 700; line-height: 1; text-align: center; color: var(--ms-done); }
-.row .name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .repo { margin-left: 6px; font-size: 11px; color: var(--orca-muted-foreground); }
-.row .badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 16px;
-  color: var(--ms-todo); background: color-mix(in oklch, var(--ms-todo) 18%, transparent); }
-.row .working { flex: none; font-size: 11px; font-weight: 600; color: var(--ms-working); }
-.row .background { flex: none; font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
-.row .of { flex: none; font-size: 11px; color: var(--ms-done); }
-.row .bar { height: 4px; margin: 4px 0 0 14px; }
-@media (prefers-reduced-motion: reduce) {
-  .bar > div, li, li .mark, li .strike, .row .detail { transition: none; }
-}
-/* What the agent proposes to do next, one card under another, as on the phone. A soft raised
-   surface instead of a border; green only on the card being sent. */
-.next { margin: 2px 0 10px; }
-.next h2 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0 0 6px;
-  font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
-.next h2 span { font-weight: 400; }
+li { padding: 2px 0; }
+.steps li { display: flex; gap: 8px; overflow-wrap: anywhere; }
+.mark { flex: none; width: 1em; text-align: center; font-weight: 700; color: var(--ms-todo); }
+.completed { color: var(--orca-muted-foreground); }
+.pending .mark { color: var(--orca-muted-foreground); }
+.in_progress { font-weight: 600; }
+.empty { color: var(--orca-muted-foreground); overflow-wrap: anywhere; }
+button, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+button:focus-visible, [data-open]:focus-visible, textarea:focus-visible { outline: 2px solid var(--orca-foreground); outline-offset: 2px; }
+[data-open] { cursor: pointer; border-radius: 3px; }
+[data-open]:hover { background: color-mix(in oklch, var(--orca-foreground) 7%, transparent); }
+.next { margin-bottom: 8px; }
 .actions { display: flex; flex-direction: column; gap: 6px; }
-.actions li { display: block; padding: 0; }
-.action { display: flex; flex-direction: column; gap: 3px; box-sizing: border-box; width: 100%; padding: 10px 12px;
-  border: 1px solid color-mix(in oklch, var(--orca-foreground) 9%, transparent); border-radius: 10px;
-  font: inherit; text-align: left; color: var(--orca-card-foreground); cursor: pointer;
-  background: linear-gradient(color-mix(in oklch, var(--orca-foreground) 7%, var(--orca-card)), var(--orca-card));
-  transition: transform 100ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out; }
-.action:hover { background: color-mix(in oklch, var(--orca-foreground) 10%, var(--orca-card)); }
-.action:active { transform: scale(0.98); }
-.action:focus-visible { outline: 1px solid var(--orca-foreground); outline-offset: 1px; }
-.action .label { font-weight: 600; }
-.next.busy .action, .next.busy .submit { cursor: default; }
-.next.busy .action:not(.sending) { opacity: 0.55; }
-.next.settling .action, .next.settling .submit { opacity: 0.55; cursor: default; }
-.action.sending, .action.chosen { background: color-mix(in oklch, var(--ms-bar) 22%, var(--orca-card));
-  border-color: color-mix(in oklch, var(--ms-bar) 55%, transparent); }
-/* A question, its options and the form's button. */
-.next .ask { margin: 0 0 8px; font-weight: 600; }
-.next .hint { margin: -4px 0 6px; font-size: 11px; color: var(--orca-muted-foreground); }
-.next .question { margin-bottom: 12px; }
-.action .detail { font-size: 12px; color: var(--orca-muted-foreground); }
-.submit { display: block; box-sizing: border-box; width: 100%; padding: 8px 12px; border: 0; border-radius: 10px;
-  font: inherit; font-weight: 600; color: white; background: var(--ms-bar); cursor: pointer; transition: opacity 150ms ease-out; }
-.submit:disabled { opacity: 0.4; cursor: default; }
-.submit.sending { opacity: 0.7; }
-/* A permission for a dangerous command: the first press only asks for a second. */
-.next h2 .danger { font-weight: 700; color: var(--ms-todo); }
-/* What a permitted call would do: read only, write here, or reach past this machine. */
-.next h2 .risk { font-weight: 600; color: var(--orca-muted-foreground); }
-.next h2 .risk.read { color: var(--ms-done); }
-.next h2 .risk.outside { color: var(--ms-working); }
-.next .allowed { margin: 10px 0 0; font-size: 12px; color: var(--orca-muted-foreground); }
-.next .allowed p { margin: 0 0 4px; font-weight: 600; }
-.next .allowed ul { margin: 0; padding-left: 16px; overflow-wrap: anywhere; }
-.next .where { margin: -4px 0 8px; font-size: 12px; color: var(--orca-muted-foreground); overflow-wrap: anywhere; }
-.action.armed { background: color-mix(in oklch, var(--ms-todo) 16%, var(--orca-card));
-  border-color: color-mix(in oklch, var(--ms-todo) 60%, transparent); }
-.next .status { margin: 6px 0 0; font-size: 11px; color: var(--ms-todo); }
-@media (prefers-reduced-motion: reduce) {
-  .action { transition: none; }
-}
+.actions li { padding: 0; }
+.action { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 9px 10px;
+  border: 1px solid var(--orca-border); border-radius: var(--orca-radius, 6px);
+  text-align: left; color: var(--orca-card-foreground); background: var(--orca-card);
+  transition: background-color 150ms ease-out, border-color 150ms ease-out; }
+.action:hover { background: color-mix(in oklch, var(--orca-foreground) 8%, var(--orca-card)); }
+.label { font-weight: 600; }
+.options { display: flex; flex-wrap: wrap; gap: 5px; }
+.option { display: inline-flex; width: auto; max-width: 100%; min-height: 28px; padding: 3px 8px; font-size: 12px; overflow-wrap: anywhere; }
+.option .label { display: flex; align-items: baseline; gap: 6px; }
+.description { font-size: 11px; color: var(--orca-muted-foreground); }
+.recommended { flex: none; padding: 0 4px; border-radius: 3px; font-size: 11px; color: var(--orca-foreground); background: var(--ms-track); }
+.question { margin: 6px 0 8px; }
+.ask, .ask-text { margin: 0 0 6px; font-weight: 600; overflow-wrap: anywhere; }
+.ask-text { white-space: pre-wrap; }
+textarea { display: block; width: 100%; margin: 6px 0 8px; padding: 6px 8px; resize: vertical;
+  border: 1px solid var(--orca-border); border-radius: var(--orca-radius, 6px);
+  color: var(--orca-foreground); background: var(--orca-background); caret-color: var(--orca-foreground); }
+.submit { display: block; min-height: 28px; padding: 4px 10px; border: 0; border-radius: var(--orca-radius, 6px);
+  font-size: 12px; font-weight: 600; color: var(--orca-background); background: var(--orca-foreground); }
+.submit:disabled { color: var(--orca-muted-foreground); background: var(--ms-track); }
+.next.busy .action { cursor: default; opacity: .55; }
+.next.settling .action, .next.settling .submit { opacity: .55; cursor: default; }
+.action.sending, .action.chosen { background: color-mix(in oklch, var(--ms-bar) 18%, var(--orca-card)); border-color: var(--ms-done); }
+.status { margin: 6px 0 0; font-size: 11px; color: var(--ms-ask); overflow-wrap: anywhere; }
+.status:empty { display: none; }
+.turn-head { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 0 8px; align-items: center; padding: 3px 0; }
+.dot { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--orca-muted-foreground); }
+.dot.attention { background: var(--ms-ask); }
+.dot.working { background: var(--ms-working); }
+.dot.waiting { background: var(--ms-todo); }
+.dot.done { background: var(--ms-done); }
+.name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.age { font-size: 11px; color: var(--orca-muted-foreground); font-variant-numeric: tabular-nums; }
+.title { grid-column: 2 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--orca-muted-foreground); }
+.row { padding: 2px 0; }
+.head { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.head .name { flex: 1; }
+.row-agent, .of { flex: none; font-size: 11px; color: var(--orca-muted-foreground); }
+.row-agent { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow-wrap: anywhere; }
+.of { font-variant-numeric: tabular-nums; }
+.row-next, .suggestion { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.row-next { margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--orca-border); }
+.row-next p, .suggestion p { flex: 1 1 100px; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.row-next .action, .suggestion .action { flex: none; width: auto; min-height: 28px; padding: 4px 8px; font-size: 11px; font-weight: 600; }
+footer { flex: none; padding-top: 8px; }
+footer button { width: 100%; min-height: 30px; padding: 5px 10px; border: 1px solid var(--orca-border); border-radius: var(--orca-radius, 6px); color: var(--orca-foreground); background: var(--orca-card); }
+::selection { color: var(--orca-background); background: var(--orca-foreground); }
+@media (prefers-reduced-motion: reduce) { .bar > div, .action { transition: none; } }

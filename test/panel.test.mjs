@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { JSDOM } from 'jsdom'
-import { scrollExpandedRows } from '../panel/expand.mjs'
 import { openOnPress } from '../panel/open.mjs'
 import { patchChildren } from '../panel/patch.mjs'
 
@@ -95,33 +94,9 @@ test('pressing a row head opens its workspace, also after a patch, but its detai
   assert.equal(opened.length, 4)
 })
 
-test('the wheel over a head scrolls its tasks, and opening starts at what is left', () => {
-  const root = body(
-    '<li class="row"><div class="head"><span class="name">app</span></div><div class="detail"><div class="inner"><ol><li class="completed">a</li><li class="pending">b</li></ol></div></div></li><li class="row"><div class="head"><span class="name">bare</span></div></li>'
-  )
-  scrollExpandedRows(root)
-  const { MouseEvent, WheelEvent } = root.ownerDocument.defaultView
-  const inner = root.querySelector('.inner')
-  root.querySelector('li.pending').getBoundingClientRect = () => ({ top: 300 })
-  inner.getBoundingClientRect = () => ({ top: 100 })
-
-  const enter = (from) => root.querySelector('.name').dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: from }))
-  enter(root.ownerDocument.body)
-  assert.equal(inner.scrollTop, 176, 'the task left, with a little of what came before it')
-
-  enter(inner)
-  assert.equal(inner.scrollTop, 176, 'coming back from its own tasks does not jump')
-
-  root.querySelector('.name').dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 40 }))
-  assert.equal(inner.scrollTop, 216)
-
-  root.querySelectorAll('.name')[1].dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 40 }))
-  assert.equal(inner.scrollTop, 216, 'a row with no tasks has nothing to scroll')
-})
-
 test('a pressed card is sent once, and a refusal says why and lets the cards be pressed again', async () => {
   const { sendOnPress } = await import('../panel/next.mjs')
-  const root = body('<main><div class="next"><ol class="actions"><li><button data-next="o1" data-index="0">A</button></li><li><button data-next="o1" data-index="1">B</button></li></ol></div></main>')
+  const root = body('<main><div class="next"><ol class="actions"><li><button data-next="o1" data-path="/work/app" data-index="0">A</button></li><li><button data-next="o1" data-path="/work/app" data-index="1">B</button></li></ol></div></main>')
   const requests = []
   let answer = { sent: false, reason: 'typing' }
   sendOnPress(root, async (request) => {
@@ -131,8 +106,8 @@ test('a pressed card is sent once, and a refusal says why and lets the cards be 
   const [a, b] = root.querySelectorAll('[data-next]')
   b.click()
   await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.deepEqual(requests, [{ offer: 'o1', index: 1 }])
-  assert.match(root.querySelector('.status').textContent, /書きかけ/)
+  assert.deepEqual(requests, [{ path: '/work/app', offer: 'o1', index: 1 }])
+  assert.match(root.querySelector('.status').textContent, /未送信のテキスト/)
   assert.ok(!root.querySelector('.next').classList.contains('busy'))
 
   answer = { sent: true }
@@ -142,12 +117,13 @@ test('a pressed card is sent once, and a refusal says why and lets the cards be 
   assert.equal(requests.length, 2, 'a second click while one is on its way is ignored')
   assert.ok(a.classList.contains('sending'))
   assert.ok(root.querySelector('.next').classList.contains('busy'))
+  assert.equal(root.querySelector('.status'), null, 'a successful retry clears the previous refusal')
 })
 
 test('a card that just came in the place of the answered one takes no presses for a moment', async () => {
   const { sendOnPress } = await import('../panel/next.mjs')
   const { patchChildren } = await import('../panel/patch.mjs')
-  const cards = (offer) => `<main><div class="next" data-key="next\n${offer}"><ol class="actions"><li><button data-next="${offer}" data-index="0">許可</button></li><li><button data-next="${offer}" data-index="1">拒否</button></li></ol></div></main>`
+  const cards = (offer) => `<main><div class="next" data-key="next\n${offer}"><ol class="actions"><li><button data-next="${offer}" data-path="/work/app" data-index="0">テストを書く</button></li><li><button data-next="${offer}" data-path="/work/app" data-index="1">PR を作る</button></li></ol></div></main>`
   const root = body('')
   let time = 0
   const timers = []
@@ -173,7 +149,7 @@ test('a card that just came in the place of the answered one takes no presses fo
   assert.ok(!root.querySelector('.next').classList.contains('settling'))
   root.querySelector('[data-next]').click()
   await flush()
-  assert.deepEqual(requests, [{ offer: 'first', index: 0 }])
+  assert.deepEqual(requests, [{ path: '/work/app', offer: 'first', index: 0 }])
 
   time = 2000
   show('second')
@@ -189,5 +165,17 @@ test('a card that just came in the place of the answered one takes no presses fo
   timers.splice(0).forEach((run) => run())
   root.querySelectorAll('[data-next]')[1].click()
   await flush()
-  assert.deepEqual(requests[1], { offer: 'second', index: 1 })
+  assert.deepEqual(requests[1], { path: '/work/app', offer: 'second', index: 1 })
+})
+
+test('the board button opens the board once and reports a failure beside the button', async () => {
+  const root = body('<footer><button type="button" data-board>ボードを開く</button><p class="status" role="status"></p></footer>')
+  let opens = 0
+  openOnPress(root, () => assert.fail('no workspace row was pressed'), async () => { opens += 1; return { opened: false } })
+  root.querySelector('[data-board]').click()
+  root.querySelector('[data-board]').click()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(opens, 1)
+  assert.match(root.querySelector('.status').textContent, /ボードを開けませんでした/)
+  assert.equal(root.querySelector('[data-board]').disabled, false)
 })
