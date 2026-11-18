@@ -52,10 +52,9 @@ function elapsed(value, now) {
   return `${Math.floor(minutes / 1440)}日経過`
 }
 
-function renderTurn({ label, items }, focusedPath, now) {
-  const rows = items.filter((item) => !item.path || item.path !== focusedPath)
-  if (rows.length === 0) return ''
-  return `<section class="turn"><h2 class="count"><span>${escape(label)}</span><span>${items.length}</span></h2><ol class="rows">${rows.map((item) => `<li class="turn-row" data-key="${escape(item.id)}"><div class="turn-head"${item.path ? ` role="button" tabindex="0" data-open="${escape(item.path)}"` : ''}><span class="dot attention"></span><span class="name">${escape(item.workspace)}</span><span class="age">${elapsed(item.opened_at, now)}</span><span class="title" title="${escape(item.title)}">${escape(item.title)}</span></div></li>`).join('')}</ol></section>`
+function renderTurn({ label, items }, now) {
+  if (items.length === 0) return ''
+  return `<section class="turn"><h2 class="count"><span>${escape(label)}</span><span>${items.length}</span></h2><ol class="rows">${items.map((item) => `<li class="turn-row" data-key="${escape(item.id)}"><div class="turn-head"${item.path ? ` role="button" tabindex="0" data-open="${escape(item.path)}"` : ''}><span class="dot attention"></span><span class="name">${escape(item.workspace)}</span><span class="age">${elapsed(item.opened_at, now)}</span><span class="title" title="${escape(item.title)}">${escape(item.title)}</span></div></li>`).join('')}</ol></section>`
 }
 
 function renderOther(row) {
@@ -71,5 +70,5 @@ export function renderBody(model) {
   const header = row ? `<header><h1>${escape(row.workspace)}</h1><span class="agent ${escape(row.agents[0]?.state ?? '')}">${escape(agentLabel(row))}</span></header>` : ''
   const asks = row ? [...row.asks].sort((a, b) => Date.parse(b.opened_at) - Date.parse(a.opened_at)).map((ask) => renderAsk(ask, model.now)).join('') : ''
   const others = model.others.length ? `<section class="others"><h2>ほかの workspace</h2><ol class="rows">${model.others.map(renderOther).join('')}</ol></section>` : ''
-  return `<main>${header}${asks}${row ? renderSteps(row) + renderNext(row) : ''}${renderTurn(model.turn, row?.path, model.now)}${others}</main>${FOOTER}`
+  return `<main>${header}${asks}${row ? renderSteps(row) + renderNext(row) : ''}${renderTurn(model.turn, model.now)}${others}</main>${FOOTER}`
 }
