@@ -11,7 +11,7 @@ export const workspace = (name = 'app', extra = {}) => ({
   asks: [], pulls: [], next: null, ...extra
 })
 export const ask = (extra = {}) => ({
-  id: 'ask:a', revision: 3, title: 'Release', text: 'Release details', opened_at: '2026-11-18T11:30:00+09:00', waits_on: 'Owner',
+  id: 'ask:a', revision: 3, title: 'Release', text: 'Release details', opened_at: '2026-11-18T11:30:00+09:00', waits_on: 'Owner', can_answer: true,
   questions: [{ question: '公開の時期は？', header: '時期', recommended: '今週', multiSelect: false, options: [
     { label: '今週', description: 'すぐに公開' }, { label: '来週', description: '来週に公開' }
   ] }], ...extra

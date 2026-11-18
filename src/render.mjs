@@ -16,7 +16,7 @@ function renderSteps(row) {
   if (steps.source === 'none') return ''
   const percent = steps.total === 0 ? 0 : Math.round(steps.done / steps.total * 100)
   const open = steps.items.filter((item) => item.status !== 'done')
-  return `<section class="steps-card" data-key="${escape(`steps\n${row.path}\n${steps.goal}`)}"><div class="count"><span>step</span><strong>${escape(steps.done)} / ${escape(steps.total)}</strong></div>${steps.goal ? `<p class="goal">${escape(steps.goal)}</p>` : ''}<div class="bar"><div style="width:${percent}%"></div></div><ol class="steps">${steps.done > 0 ? `<li class="completed">✓ 済み ${escape(steps.done)}</li>` : ''}${open.map((item) => `<li class="${escape(item.status)}"><span class="mark">${item.status === 'in_progress' ? '●' : '○'}</span><span>${escape(item.text)}</span></li>`).join('')}</ol></section>`
+  return `<section class="steps-card" data-key="${escape(`steps\n${row.path}\n${steps.goal}`)}"><div class="count"><span>step</span><strong>${escape(steps.done)} / ${escape(steps.total)}</strong></div>${steps.goal ? `<p class="goal">${escape(steps.goal)}</p>` : ''}<div class="bar"><div style="width:${percent}%"></div></div><ol class="steps">${open.map((item) => `<li class="${escape(item.status)}"><span class="mark">${item.status === 'in_progress' ? '●' : '○'}</span><span>${escape(item.text)}</span></li>`).join('')}</ol></section>`
 }
 
 function openedAt(value, now) {
@@ -29,9 +29,11 @@ function openedAt(value, now) {
 
 function renderAsk(ask, now) {
   const key = `${ask.id}\n${ask.revision}`
+  const head = `<h2 class="count"><span>ask</span><time datetime="${escape(ask.opened_at)}">${openedAt(ask.opened_at, now)}</time></h2>`
+  if (ask.can_answer === false) return `<section class="ask-card" data-key="${escape(`ask\n${key}`)}">${head}${(ask.questions.length > 0 ? ask.questions.map((question) => question.question) : [ask.text]).map((text) => `<p class="ask-text">${escape(text)}</p>`).join('')}</section>`
   const questions = ask.questions.map((question, position) => `<div class="question"><p class="ask">${escape(question.question)}</p><div class="options" role="group" aria-label="${escape(question.question)}">${question.options.map((option, index) => `<button type="button" class="action option" data-form="${escape(key)}" data-question="${position}" data-option="${index}" data-label="${escape(option.label)}" aria-pressed="false"><span class="label">${escape(option.label)}${option.label === question.recommended ? '<span class="recommended">推奨</span>' : ''}</span>${option.description ? `<span class="description">${escape(option.description)}</span>` : ''}</button>`).join('')}</div></div>`).join('')
   const body = ask.questions.length > 0 ? questions : `<p class="ask-text">${escape(ask.text)}</p><textarea data-text="${escape(key)}" aria-label="回答" rows="3"></textarea>`
-  return `<section class="next ask-card" data-key="${escape(`ask\n${key}`)}" data-ask="${escape(ask.id)}" data-revision="${escape(ask.revision)}"><h2 class="count"><span>ask</span><time datetime="${escape(ask.opened_at)}">${openedAt(ask.opened_at, now)}</time></h2>${body}<button type="button" class="submit" data-submit="${escape(key)}" data-count="${ask.questions.length}" disabled>回答を送信</button></section>`
+  return `<section class="next ask-card" data-key="${escape(`ask\n${key}`)}" data-ask="${escape(ask.id)}" data-revision="${escape(ask.revision)}">${head}${body}<button type="button" class="submit" data-submit="${escape(key)}" data-count="${ask.questions.length}" disabled>回答を送信</button></section>`
 }
 
 function nextButton(row, index, content) {
@@ -40,7 +42,7 @@ function nextButton(row, index, content) {
 
 function renderNext(row) {
   if (!row.next) return ''
-  return `<div class="next proposal" data-key="${escape(`next\n${row.path}\n${row.next.id}`)}"><h2>次の作業</h2><ol class="actions">${row.next.suggestions.map((suggestion, index) => `<li>${nextButton(row, index, `<span class="label">${escape(suggestion.label)}</span>`)}</li>`).join('')}</ol></div>`
+  return `<div class="next proposal" data-key="${escape(`next\n${row.path}\n${row.next.id}`)}"><h2>次の作業</h2><ol class="actions">${row.next.suggestions.map((suggestion, index) => `<li class="suggestion"><p>${escape(suggestion.prompt)}</p>${nextButton(row, index, `${AGENT_NAMES[row.next.agent]} に送る`)}</li>`).join('')}</ol></div>`
 }
 
 function elapsed(value, now) {
@@ -50,9 +52,10 @@ function elapsed(value, now) {
   return `${Math.floor(minutes / 1440)}日経過`
 }
 
-function renderTurn({ label, items }, now) {
-  if (items.length === 0) return ''
-  return `<section class="turn"><h2 class="count"><span>${escape(label)}</span><span>${items.length}</span></h2><ol class="rows">${items.map((item) => `<li class="turn-row" data-key="${escape(item.id)}"><div class="turn-head"${item.path ? ` role="button" tabindex="0" data-open="${escape(item.path)}"` : ''}><span class="dot attention"></span><span class="name">${escape(item.workspace)}</span><span class="age">${elapsed(item.opened_at, now)}</span><span class="title" title="${escape(item.title)}">${escape(item.title)}</span></div></li>`).join('')}</ol></section>`
+function renderTurn({ label, items }, focusedPath, now) {
+  const rows = items.filter((item) => !item.path || item.path !== focusedPath)
+  if (rows.length === 0) return ''
+  return `<section class="turn"><h2 class="count"><span>${escape(label)}</span><span>${items.length}</span></h2><ol class="rows">${rows.map((item) => `<li class="turn-row" data-key="${escape(item.id)}"><div class="turn-head"${item.path ? ` role="button" tabindex="0" data-open="${escape(item.path)}"` : ''}><span class="dot attention"></span><span class="name">${escape(item.workspace)}</span><span class="age">${elapsed(item.opened_at, now)}</span><span class="title" title="${escape(item.title)}">${escape(item.title)}</span></div></li>`).join('')}</ol></section>`
 }
 
 function renderOther(row) {
@@ -68,5 +71,5 @@ export function renderBody(model) {
   const header = row ? `<header><h1>${escape(row.workspace)}</h1><span class="agent ${escape(row.agents[0]?.state ?? '')}">${escape(agentLabel(row))}</span></header>` : ''
   const asks = row ? [...row.asks].sort((a, b) => Date.parse(b.opened_at) - Date.parse(a.opened_at)).map((ask) => renderAsk(ask, model.now)).join('') : ''
   const others = model.others.length ? `<section class="others"><h2>ほかの workspace</h2><ol class="rows">${model.others.map(renderOther).join('')}</ol></section>` : ''
-  return `<main>${header}${asks}${row ? renderSteps(row) + renderNext(row) : ''}${renderTurn(model.turn, model.now)}${others}</main>${FOOTER}`
+  return `<main>${header}${asks}${row ? renderSteps(row) + renderNext(row) : ''}${renderTurn(model.turn, row?.path, model.now)}${others}</main>${FOOTER}`
 }

@@ -19,7 +19,7 @@ const steps = {
   ]
 }
 const focus = row('search-filters', agent(), steps, { asks: [{
-  id: 'ask:sample', revision: 3, title: '絞り込みの初期値', text: '', opened_at: '2026-11-18T20:31:00+09:00', waits_on: 'Owner',
+  id: 'ask:sample', revision: 3, title: '絞り込みの初期値', text: '', opened_at: '2026-11-18T20:31:00+09:00', waits_on: 'Owner', can_answer: true,
   questions: [
     { question: '絞り込みの初期値をどうしますか？', header: '初期値', recommended: '前回の条件', options: [
       { label: '前回の条件', description: '' }, { label: 'すべて', description: '' }

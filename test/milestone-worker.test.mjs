@@ -16,8 +16,8 @@ test('start reads both core resources and renders the focused path, posting only
   assert.equal(doc.querySelector('.agent').textContent, 'Claude 作業中')
   assert.match(doc.querySelector('.steps-card').textContent, /1 \/ 3/)
   assert.equal(doc.querySelector('.goal').textContent, 'Core goal')
-  assert.match(doc.querySelector('.completed').textContent, /✓ 済み 1/)
-  assert.equal(doc.querySelectorAll('.steps li').length, 3)
+  assert.equal(doc.querySelectorAll('.steps li').length, 2)
+  assert.equal(doc.querySelector('.turn'), null)
   assert.ok(!doc.querySelector('.steps-card').textContent.includes('Read spec'))
   await h.worker.refresh()
   assert.equal(h.posts.length, 1)
@@ -127,7 +127,7 @@ test('turn rows show elapsed ages and openable paths; other rows use core counts
   const { turnItem } = await import('./core-fixture.mjs')
   const h = harness(t, { items: [
     turnItem({ path: null, workspace: 'remote', opened_at: '2026-11-16T12:00:00+09:00' }),
-    turnItem({ opened_at: '2026-11-18T10:00:00+09:00' }),
+    turnItem({ workspace: 'busy', path: '/work/busy', opened_at: '2026-11-18T10:00:00+09:00' }),
     turnItem({ opened_at: '2026-11-18T11:48:00+09:00' })
   ], workspaces: [
     workspace(), workspace('busy'), workspace('empty', { agents: [], steps: { source: 'none', done: 0, total: 0, items: [] } }),
@@ -139,8 +139,9 @@ test('turn rows show elapsed ages and openable paths; other rows use core counts
   ] })
   await h.worker.start()
   const doc = documentOf(h)
-  assert.deepEqual([...doc.querySelectorAll('.turn .age')].map((node) => node.textContent), ['2日経過', '2時間経過', '12分経過'])
-  assert.equal(doc.querySelectorAll('.turn [data-open]').length, 2)
+  assert.deepEqual([...doc.querySelectorAll('.turn .age')].map((node) => node.textContent), ['2日経過', '2時間経過'])
+  assert.equal(doc.querySelector('.turn h2 span:last-child').textContent, '3')
+  assert.equal(doc.querySelectorAll('.turn [data-open]').length, 1)
   assert.equal(doc.querySelector('.turn h2 span').textContent, 'Owner の番')
   assert.equal(doc.querySelector('.turn .title').textContent, 'Review the design')
   assert.deepEqual([...doc.querySelectorAll('.others .name')].map((node) => node.textContent), ['ready', 'busy', 'steps-only', 'pair'])
@@ -252,10 +253,25 @@ test('values from the core cannot add markup to the panel', async (t) => {
     workspace('app', {
       agents: [{ agent: 'claude', state: hostile }],
       steps: { source: 'tasks', goal: 'Goal', done: hostile, total: hostile, items: [{ text: 'Step', status: hostile }] },
-      asks: [{ id: 'ask:x', revision: hostile, title: 'T', text: 'T', opened_at: '2026-11-18T11:30:00+09:00', waits_on: 'Owner', questions: [] }]
+      asks: [{ id: 'ask:x', revision: hostile, title: 'T', text: 'T', opened_at: '2026-11-18T11:30:00+09:00', waits_on: 'Owner', can_answer: true, questions: [] }]
     }),
     workspace('other', { steps: { source: 'tasks', goal: 'Goal', done: hostile, total: 3, items: [] } })
   ] })
   await h.worker.start()
   assert.equal(documentOf(h).querySelector('img'), null)
+})
+
+test('the focused cards show what a press sends and no form for an ask the core refuses', async (t) => {
+  const h = harness(t, { workspaces: [workspace('app', {
+    agents: [{ agent: 'claude', state: 'done' }],
+    asks: [{ id: 'ask:m', revision: 1, title: 'Pick', text: 'Pick', opened_at: '2026-11-18T11:30:00+09:00', waits_on: 'Owner', can_answer: false,
+      questions: [{ question: 'Pick several', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }], multiSelect: true }] }],
+    next: { id: 'offer:a', agent: 'claude', suggestions: [{ label: 'Step', prompt: '「Step」を進めてください' }] }
+  })] })
+  await h.worker.start()
+  const doc = documentOf(h)
+  assert.equal(doc.querySelector('.ask-card .ask-text').textContent, 'Pick several')
+  assert.equal(doc.querySelector('.ask-card button, .ask-card textarea'), null)
+  assert.deepEqual([...doc.querySelectorAll('.proposal .suggestion')].map((node) => [node.querySelector('p').textContent, node.querySelector('button').textContent]),
+    [['「Step」を進めてください', 'Claude に送る']])
 })

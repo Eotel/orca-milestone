@@ -1,4 +1,4 @@
-:root { color-scheme: light dark; --ms-bar: oklch(62.7% 0.194 149.214);
+:root { --ms-bar: oklch(62.7% 0.194 149.214);
   --ms-done: oklch(45% 0.1 163.225); --ms-todo: oklch(50% 0.15 41.116);
   --ms-working: oklch(48% 0.13 75.834); --ms-ask: oklch(55% 0.17 27);
   --ms-track: color-mix(in oklch, var(--orca-foreground) 12%, transparent); }
@@ -53,7 +53,7 @@ button:focus-visible, [data-open]:focus-visible, textarea:focus-visible { outlin
 .option { display: inline-flex; width: auto; max-width: 100%; min-height: 28px; padding: 3px 8px; font-size: 12px; overflow-wrap: anywhere; }
 .option .label { display: flex; align-items: baseline; gap: 6px; }
 .description { font-size: 11px; color: var(--orca-muted-foreground); }
-.recommended { flex: none; padding: 0 4px; border-radius: 3px; font-size: 10px; color: var(--orca-foreground); background: var(--ms-track); }
+.recommended { flex: none; padding: 0 4px; border-radius: 3px; font-size: 11px; color: var(--orca-foreground); background: var(--ms-track); }
 .question { margin: 6px 0 8px; }
 .ask, .ask-text { margin: 0 0 6px; font-weight: 600; overflow-wrap: anywhere; }
 .ask-text { white-space: pre-wrap; }
@@ -66,12 +66,13 @@ textarea { display: block; width: 100%; margin: 6px 0 8px; padding: 6px 8px; res
 .next.busy .action { cursor: default; opacity: .55; }
 .next.settling .action, .next.settling .submit { opacity: .55; cursor: default; }
 .action.sending, .action.chosen { background: color-mix(in oklch, var(--ms-bar) 18%, var(--orca-card)); border-color: var(--ms-done); }
-.status { margin: 6px 0 0; font-size: 11px; color: var(--ms-todo); overflow-wrap: anywhere; }
+.status { margin: 6px 0 0; font-size: 11px; color: var(--ms-ask); overflow-wrap: anywhere; }
 .status:empty { display: none; }
 .turn-head { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 0 8px; align-items: center; padding: 3px 0; }
 .dot { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--orca-muted-foreground); }
 .dot.attention { background: var(--ms-ask); }
-.dot.working, .dot.waiting { background: var(--ms-todo); }
+.dot.working { background: var(--ms-working); }
+.dot.waiting { background: var(--ms-todo); }
 .dot.done { background: var(--ms-done); }
 .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .age { font-size: 11px; color: var(--orca-muted-foreground); font-variant-numeric: tabular-nums; }
@@ -82,9 +83,10 @@ textarea { display: block; width: 100%; margin: 6px 0 8px; padding: 6px 8px; res
 .row-agent, .of { flex: none; font-size: 11px; color: var(--orca-muted-foreground); }
 .row-agent { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow-wrap: anywhere; }
 .of { font-variant-numeric: tabular-nums; }
-.row-next { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--orca-border); }
-.row-next p { flex: 1 1 100px; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
-.row-next .action { flex: none; width: auto; min-height: 28px; padding: 4px 8px; font-size: 11px; font-weight: 600; }
+.row-next, .suggestion { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.row-next { margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--orca-border); }
+.row-next p, .suggestion p { flex: 1 1 100px; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.row-next .action, .suggestion .action { flex: none; width: auto; min-height: 28px; padding: 4px 8px; font-size: 11px; font-weight: 600; }
 footer { flex: none; padding-top: 8px; }
 footer button { width: 100%; min-height: 30px; padding: 5px 10px; border: 1px solid var(--orca-border); border-radius: var(--orca-radius, 6px); color: var(--orca-foreground); background: var(--orca-card); }
 ::selection { color: var(--orca-background); background: var(--orca-foreground); }
