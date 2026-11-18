@@ -1,333 +1,261 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { test } from 'node:test'
-import { createMilestoneWorker } from '../src/milestone-worker.mjs'
-import { SESSION_A, SESSION_B, makeHome, markRunning, orcaAccount, task, taskCalls, writeTasks, writeTranscript } from './helpers.mjs'
+import { JSDOM } from 'jsdom'
+import { harness, workspace } from './core-fixture.mjs'
 
-function fakeOrca() {
-  const posts = []
-  return {
-    log: () => {},
-    panels: { post: (event, payload) => posts.push({ event, payload }) },
-    posts,
-    shown: () => posts.at(-1).payload.html
-  }
-}
+const documentOf = (h) => new JSDOM(h.html()).window.document
 
-test('refresh posts the focused workspace tasks to the panel', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  await writeTranscript(home, SESSION_A, { cwd: '/work/app', prompt: 'Build milestones' })
-  await writeTasks(home, SESSION_A, [task(1, 'Read spec', 'completed'), task(2, 'Write code', 'in_progress')])
-  await writeTranscript(home, SESSION_B, { cwd: '/work/other', prompt: 'Something else' })
-  await writeTasks(home, SESSION_B, [task(1, 'Unrelated', 'pending')])
-
-  let cliCalls = 0
-  const worker = createMilestoneWorker({
-    orca,
-    home,
-    cli: 'orca',
-    readOrca: async () => {
-      cliCalls += 1
-      return { active: { path: '/work/app', displayName: 'app', agentStates: ['working'] }, agents: [] }
-    },
-    watchDir: () => {}
-  })
-
-  await worker.refresh(true)
-  const first = orca.shown()
-  assert.ok(first.includes('Build milestones'))
-  assert.ok(first.includes('1 / 2'))
-  assert.ok(!first.includes('Unrelated'))
-
-  await writeTasks(home, SESSION_A, [task(2, 'Write code', 'completed'), task(3, 'Run tests', 'in_progress')])
-  await worker.refresh()
-  const second = orca.shown()
-  assert.ok(second.includes('2 / 3'))
-  assert.equal(cliCalls, 1, 'a task change alone does not ask the CLI again')
-})
-
-test('a list Claude deletes after finishing stays on screen as done; a cleared unfinished one goes', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  await writeTranscript(home, SESSION_A, { cwd: '/work/app', prompt: 'Finish me' })
-  await writeTranscript(home, SESSION_B, { cwd: '/work/app', prompt: 'Abandon me' })
-  const doneDir = await writeTasks(home, SESSION_A, [task(1, 'Only step', 'completed')])
-  const clearedDir = await writeTasks(home, SESSION_B, [task(1, 'Half step', 'in_progress')])
-  const worker = createMilestoneWorker({
-    orca,
-    home,
-    cli: 'orca',
-    readOrca: async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] }),
-    watchDir: () => {}
-  })
-  await worker.refresh(true)
-  await rm(join(doneDir, '1.json'))
-  await rm(join(clearedDir, '1.json'))
-  await worker.refresh()
-  const html = orca.shown()
-  assert.ok(html.includes('Finish me'))
-  assert.ok(html.includes('1 / 1'))
-  assert.ok(!html.includes('Abandon me'))
-})
-
-test('a team lead\'s list, named session-<id prefix>, shows under its workspace', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  await writeTranscript(home, SESSION_A, { cwd: '/work/app', prompt: 'Team goal' })
-  await writeTasks(home, 'session-11111111', [task(1, 'Plan', 'completed'), task(2, 'Build', 'pending')])
-  await writeTasks(home, 'session-22222222', [])
-  const worker = createMilestoneWorker({
-    orca,
-    home,
-    cli: 'orca',
-    readOrca: async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] }),
-    watchDir: () => {}
-  })
-  await worker.refresh(true)
-  const html = orca.shown()
-  assert.ok(html.includes('Team goal'))
-  assert.ok(html.includes('1 / 2'))
-})
-
-test('the heading follows the goal of the current tasks, not the first prompt of the session', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  await writeTranscript(home, SESSION_A, { cwd: '/work/app', prompt: 'First goal' })
-  const transcript = join(home, '.claude', 'projects', '-work-app', `${SESSION_A}.jsonl`)
-  await appendFile(
-    transcript,
-    [
-      { type: 'user', cwd: '/work/app', message: { role: 'user', content: 'Second goal' } },
-      { type: 'assistant', cwd: '/work/app', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'TaskCreate', input: { subject: 'Step two' } }] } }
-    ].map((line) => JSON.stringify(line)).join('\n') + '\n'
-  )
-  await writeTasks(home, SESSION_A, [task(1, 'Step two', 'pending')])
-  const worker = createMilestoneWorker({
-    orca,
-    home,
-    cli: 'orca',
-    readOrca: async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] }),
-    watchDir: () => {}
-  })
-  await worker.refresh(true)
-  let html = orca.shown()
-  assert.ok(html.includes('Second goal'))
-  assert.ok(!html.includes('First goal'))
-
-  await writeTasks(home, SESSION_A, [
-    task(1, 'Step two', 'completed'),
-    task(2, 'Step three', 'pending', { metadata: { goal: 'Goal Claude wrote' } })
+test('start reads both core resources and renders the focused path, posting only changed HTML', async (t) => {
+  const h = harness(t)
+  await h.worker.start()
+  assert.deepEqual(h.requests.filter(([url]) => !url.endsWith('/events')).map(([url]) => url), [
+    'http://board.test/api/v1/workspaces', 'http://board.test/api/v1/turn'
   ])
-  await worker.refresh()
-  html = orca.shown()
-  assert.ok(html.includes('Goal Claude wrote'))
-  assert.ok(html.includes('0 / 1'), 'tasks of the earlier goal are left out')
-  assert.ok(!html.includes('Step two'))
+  const doc = documentOf(h)
+  assert.equal(doc.querySelector('h1').textContent, 'app')
+  assert.equal(doc.querySelector('.agent').textContent, 'Claude 作業中')
+  assert.match(doc.querySelector('.steps-card').textContent, /1 \/ 3/)
+  assert.equal(doc.querySelector('.goal').textContent, 'Core goal')
+  assert.match(doc.querySelector('.completed').textContent, /✓ 済み 1/)
+  assert.equal(doc.querySelectorAll('.steps li').length, 3)
+  assert.ok(!doc.querySelector('.steps-card').textContent.includes('Read spec'))
+  await h.worker.refresh()
+  assert.equal(h.posts.length, 1)
+  h.state.workspaces = [workspace('app', { steps: { source: 'none', goal: null, done: 0, total: 0, items: [] } })]
+  await h.worker.refresh()
+  assert.equal(h.posts.length, 2)
+  assert.equal(documentOf(h).querySelector('.steps-card'), null)
 })
 
-test('a finished list comes back from the transcript after a restart, and goes with its session', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  await writeTranscript(home, SESSION_A, {
-    cwd: '/work/done',
-    prompt: 'Do it',
-    running: false,
-    extra: taskCalls(
-      [{ subject: 'Old step' }, { subject: 'New step', metadata: { goal: 'Second goal' } }],
-      [{ taskId: '1', status: 'completed' }, { taskId: '2', status: 'completed' }]
-    )
+test('turn count updates the status bar, opens the oldest reachable item and hides on zero or outage', async (t) => {
+  const h = harness(t, { items: [
+    { ...workspace(), title: 'Remote oldest', path: null, opened_at: '2026-11-17T12:00:00+09:00' },
+    { ...workspace(), title: 'Local next', opened_at: '2026-11-18T10:00:00+09:00' }
+  ] })
+  await h.worker.start()
+  assert.deepEqual(h.status(), { id: 'turn', text: 'Owner の番 2', tone: 'warning', tooltip: 'app\nRemote oldest', visible: true })
+  assert.deepEqual(await h.worker.openTurn(), { opened: true })
+  assert.deepEqual(h.calls.at(-1), ['workspace.open', { workspaceId: 'identity:app' }])
+  h.state.items = []
+  await h.worker.refresh()
+  assert.deepEqual(h.status(), { id: 'turn', visible: false })
+  assert.deepEqual(await h.worker.openTurn(), { opened: false })
+  h.state.offline = true
+  await h.worker.refresh()
+  assert.match(h.html(), /ボードに接続できません.*http:\/\/board.test/)
+  assert.ok(documentOf(h).querySelector('[data-board]'), 'the board entry remains available during an outage')
+  assert.deepEqual(h.status(), { id: 'turn', visible: false })
+  h.state.offline = false
+  await h.worker.refresh()
+  assert.match(h.html(), /Core goal/)
+})
+
+test('changed SSE, all agent events, focused workspace events and the 30 second fallback debounce refreshes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const h = harness(t)
+  await h.worker.start()
+  const reads = () => h.requests.filter(([url]) => url.endsWith('/turn')).length
+  h.changed()
+  h.worker.agentChanged({ paneKey: 'p', state: 'working' })
+  h.worker.agentChanged({ paneKey: 'p', state: 'working' })
+  await new Promise((resolve) => setImmediate(resolve))
+  t.mock.timers.tick(149)
+  assert.equal(reads(), 1)
+  t.mock.timers.tick(1)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(reads(), 2)
+  h.state.workspaces.push(workspace('other', { agents: [{ agent: 'codex', state: 'blocked' }] }))
+  h.state.hostRows.push({ id: 'identity:other', name: 'other', path: '/work/other', hostId: 'local' })
+  h.worker.workspaceChanged({ context: { workspaceId: 'identity:other', displayName: 'wrong name' } })
+  t.mock.timers.tick(150)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(documentOf(h).querySelector('h1').textContent, 'other')
+  assert.equal(documentOf(h).querySelector('.agent').textContent, 'Codex 入力待ち')
+  h.worker.agentChanged({ paneKey: 'p', state: 'working' })
+  t.mock.timers.tick(150)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(reads(), 4, 'even a repeated state event reads core')
+  t.mock.timers.tick(30000)
+  t.mock.timers.tick(150)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(reads(), 5)
+  h.worker.workspaceChanged({ context: null })
+  t.mock.timers.tick(150)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(documentOf(h).querySelector('h1'), null)
+})
+
+test('a refresh in flight coalesces further requests into one later refresh', async (t) => {
+  const h = harness(t)
+  await h.worker.start()
+  let release
+  h.state.readGate = new Promise((resolve) => { release = resolve })
+  const first = h.worker.refresh()
+  await new Promise((resolve) => setImmediate(resolve))
+  const reads = () => h.requests.filter(([url]) => url.endsWith('/turn')).length
+  const second = h.worker.refresh()
+  const third = h.worker.refresh()
+  assert.equal(reads(), 2)
+  release()
+  await Promise.all([first, second, third])
+  assert.equal(reads(), 3)
+})
+
+test('asks precede steps newest first, preserve questions and recommended labels, and escape core text', async (t) => {
+  const { ask } = await import('./core-fixture.mjs')
+  const h = harness(t, { workspaces: [workspace('app', { asks: [
+    ask({ id: 'ask:old', opened_at: '2026-11-16T10:00:00+09:00', questions: [], text: '<script>free text</script>' }),
+    ask({ title: 'Newer', questions: [ask().questions[0], { ...ask().questions[0], question: '表示場所は？' }] })
+  ] })] })
+  await h.worker.start()
+  const doc = documentOf(h)
+  const cards = [...doc.querySelectorAll('.ask-card')]
+  assert.deepEqual(cards.map((card) => card.dataset.ask), ['ask:a', 'ask:old'])
+  assert.equal(cards[0].querySelector('time').textContent, new Date(ask().opened_at).toTimeString().slice(0, 5))
+  assert.equal(cards[1].querySelector('time').textContent, '11/16')
+  assert.equal(cards[0].querySelectorAll('.question').length, 2)
+  assert.equal(cards[0].querySelectorAll('.recommended').length, 2)
+  assert.match(cards[0].textContent, /すぐに公開/)
+  assert.ok(cards[0].querySelector('[data-submit]').disabled)
+  assert.ok(cards[1].querySelector('textarea'))
+  assert.equal(cards[1].querySelector('script'), null)
+  assert.match(cards[1].textContent, /<script>free text<\/script>/)
+  assert.ok(h.html().indexOf('ask-card') < h.html().indexOf('steps-card'))
+})
+
+test('turn rows show elapsed ages and openable paths; other rows use core counts and done offers first', async (t) => {
+  const { turnItem } = await import('./core-fixture.mjs')
+  const h = harness(t, { items: [
+    turnItem({ path: null, workspace: 'remote', opened_at: '2026-11-16T12:00:00+09:00' }),
+    turnItem({ opened_at: '2026-11-18T10:00:00+09:00' }),
+    turnItem({ opened_at: '2026-11-18T11:48:00+09:00' })
+  ], workspaces: [
+    workspace(), workspace('busy'), workspace('empty', { agents: [], steps: { source: 'none', done: 0, total: 0, items: [] } }),
+    workspace('ready', { agents: [{ agent: 'codex', state: 'done' }], next: { id: 'offer:r', agent: 'codex', suggestions: [{ label: '送る', prompt: 'Core prompt' }] } }),
+    workspace('steps-only', { agents: [] }),
+    workspace('finished', { agents: [], steps: { source: 'brief', goal: null, done: 5, total: 5, items: [] } }),
+    workspace('agent-only', { steps: { source: 'none', goal: null, done: 0, total: 0, items: [] } }),
+    workspace('pair', { agents: [{ agent: 'claude', state: 'done' }, { agent: 'claude', state: 'done' }] })
+  ] })
+  await h.worker.start()
+  const doc = documentOf(h)
+  assert.deepEqual([...doc.querySelectorAll('.turn .age')].map((node) => node.textContent), ['2日経過', '2時間経過', '12分経過'])
+  assert.equal(doc.querySelectorAll('.turn [data-open]').length, 2)
+  assert.equal(doc.querySelector('.turn h2 span').textContent, 'Owner の番')
+  assert.equal(doc.querySelector('.turn .title').textContent, 'Review the design')
+  assert.deepEqual([...doc.querySelectorAll('.others .name')].map((node) => node.textContent), ['ready', 'busy', 'steps-only', 'pair'])
+  assert.equal(doc.querySelector('.others [data-key="/work/pair"] .row-agent').textContent, 'Claude 待機中 ×2')
+  const ready = doc.querySelector('.others .row')
+  assert.match(ready.textContent, /Codex 待機中.*step 1 \/ 3.*Core prompt.*Codex に送る/s)
+  assert.equal(ready.querySelector('[data-next]').dataset.path, '/work/ready')
+  assert.equal(ready.querySelector('[data-next]').dataset.index, '0')
+  assert.equal(doc.querySelector('[data-board]').textContent, 'ボードを開く')
+})
+
+test('next and ask submits go through core, preserving refusal reasons and refreshing after revision conflict', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const h = harness(t)
+  await h.worker.start()
+  for (const [reason, status] of [['stale', 200], ['typing', 200], ['failed', 502]]) {
+    h.state.postResult = { sent: false, reason }
+    h.state.postStatus = status
+    assert.deepEqual(await h.worker.sendNext({ path: '/work/app', offer: 'abc', index: 0 }), { sent: false, reason })
+  }
+  h.state.postResult = { error: 'revision changed' }
+  h.state.postStatus = 409
+  assert.deepEqual(await h.worker.answerAsk({ id: 'ask:a', revision: 3, answers: [{ question: 0, label: '今週' }], text: '' }), { sent: false, reason: 'changed' })
+  const before = h.requests.length
+  t.mock.timers.tick(150)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(h.requests.length, before + 2)
+  h.state.postResult = { output: 'sent' }
+  h.state.postStatus = 200
+  assert.deepEqual(await h.worker.answerAsk({ id: 'ask:a', revision: 4, answers: [], text: '公開します' }), { sent: true })
+  assert.deepEqual(JSON.parse(h.requests.at(-1)[1].body), { revision: 4, answers: [], text: '公開します' })
+})
+
+test('board opens in the configured workspace and switches its matching browser tab', async (t) => {
+  const cliCalls = []
+  const h = harness(t, { settings: { boardWorkspace: 'control' }, hostRows: [
+    { id: 'identity:app', name: 'app', path: '/work/app', hostId: 'local' },
+    { id: 'identity:control', name: 'control', path: '/work/control', hostId: 'local' }
+  ], runCli: async (cli, args) => {
+    cliCalls.push([cli, args])
+    if (args[1] === 'list') return { ok: true, result: { tabs: [
+      { browserPageId: 'wrong', url: 'http://other.test' },
+      { browserPageId: 'board-page', url: 'http://board.test/commitments' }
+    ] } }
+    return { ok: true, result: { switched: 1, browserPageId: 'board-page' } }
+  } })
+  await h.worker.start()
+  assert.deepEqual(await h.worker.openBoard(), { opened: true })
+  assert.deepEqual(h.calls.filter(([method]) => method === 'workspace.open'), [['workspace.open', { workspaceId: 'identity:control' }]])
+  assert.deepEqual(cliCalls, [
+    ['bundled-orca', ['tab', 'list', '--worktree', 'path:/work/control', '--json']],
+    ['bundled-orca', ['tab', 'switch', '--page', 'board-page', '--worktree', 'path:/work/control', '--focus', '--json']]
+  ])
+})
+
+test('board defaults to triage-lead, creates a tab when absent, and falls back to the focused workspace', async (t) => {
+  const cliCalls = []
+  const h = harness(t, { runCli: async (_cli, args) => {
+    cliCalls.push(args)
+    return { ok: true, result: args[1] === 'list' ? { tabs: [] } : { browserPageId: 'created' } }
+  } })
+  await h.worker.start()
+  assert.deepEqual(await h.worker.openBoard(), { opened: true })
+  assert.deepEqual(cliCalls.at(-1), ['tab', 'create', '--url', 'http://board.test', '--worktree', 'path:/work/app', '--json'])
+  h.state.hostRows.push({ id: 'identity:lead', name: 'triage-lead', path: '/work/triage-lead', hostId: null })
+  await h.worker.openBoard()
+  assert.deepEqual(h.calls.filter(([method]) => method === 'workspace.open').at(-1), ['workspace.open', { workspaceId: 'identity:lead' }])
+  h.state.runCli = null
+  h.worker.workspaceChanged({ context: null })
+  h.state.hostRows = []
+  assert.deepEqual(await h.worker.openBoard(), { opened: false })
+})
+
+test('a failed tab command is reported without claiming the board opened', async (t) => {
+  const h = harness(t, { runCli: async () => ({ ok: false, error: { message: 'CLI unavailable' } }) })
+  await h.worker.start()
+  assert.deepEqual(await h.worker.openBoard(), { opened: false })
+})
+
+test('turn navigation opens a listed workspace on its host and a missing path sends no open call', async (t) => {
+  const h = harness(t, { items: [{ id: 'ask:remote', workspace: 'remote', path: '/remote/app', title: 'Review', opened_at: '2026-11-17T12:00:00+09:00' }],
+    hostRows: [{ id: 'remote:app', name: 'app', path: '/remote/app', hostId: 'ssh:remote' }]
   })
-  const running = await markRunning(home, SESSION_A)
-  // Claude deleted the files of the finished list; only its high-water mark is left.
-  const dir = await writeTasks(home, SESSION_A, [])
-  await writeFile(join(dir, '.highwatermark'), '2')
-  const options = {
-    orca,
-    home,
-    cli: 'orca',
-    readOrca: async () => ({
-      active: { path: '/work/app', displayName: 'app', agentStates: [] },
-      agents: [{ workspace: 'done', path: '/work/done', focused: false, state: 'done', since: 0 }]
+  await h.worker.start()
+  assert.deepEqual(await h.worker.openTurn(), { opened: true })
+  assert.deepEqual(h.calls.at(-1), ['workspace.open', { workspaceId: 'remote:app' }])
+  assert.deepEqual(await h.worker.openWorkspace('/missing'), { opened: false })
+})
+
+test('one failed GET waits for the other GET before allowing a further refresh', async (t) => {
+  const h = harness(t)
+  await h.worker.start()
+  let release
+  h.state.turnGate = new Promise((resolve) => { release = resolve })
+  h.state.failWorkspaces = true
+  const one = h.worker.refresh()
+  await new Promise((resolve) => setImmediate(resolve))
+  const two = h.worker.refresh()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(h.requests.filter(([url]) => url.endsWith('/workspaces')).length, 2)
+  release()
+  await Promise.all([one, two])
+  assert.deepEqual(h.status(), { id: 'turn', visible: false })
+})
+
+test('values from the core cannot add markup to the panel', async (t) => {
+  const hostile = '"><img src=x onerror=alert(1)>'
+  const h = harness(t, { workspaces: [
+    workspace('app', {
+      agents: [{ agent: 'claude', state: hostile }],
+      steps: { source: 'tasks', goal: 'Goal', done: hostile, total: hostile, items: [{ text: 'Step', status: hostile }] },
+      asks: [{ id: 'ask:x', revision: hostile, title: 'T', text: 'T', opened_at: '2026-11-18T11:30:00+09:00', waits_on: 'Owner', questions: [] }]
     }),
-    watchDir: () => {}
-  }
-  const worker = createMilestoneWorker(options)
-  await worker.refresh(true)
-  let html = orca.shown()
-  assert.ok(html.includes('<span class="name">done</span>'))
-  // Only the tasks of the newest goal show.
-  assert.ok(html.includes('1 / 1'))
-  assert.ok(html.includes('Second goal'))
-
-  await rm(running)
-  await worker.refresh()
-  html = orca.shown()
-  assert.ok(!html.includes('<span class="name">done</span>'), 'gone once the session ends')
-})
-
-test('a failing CLI leaves the panel showing that no workspace is known', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  const logs = []
-  orca.log = (line) => logs.push(line)
-  const worker = createMilestoneWorker({
-    orca,
-    home,
-    cli: 'orca',
-    readOrca: async () => {
-      throw new Error('runtime unavailable')
-    },
-    watchDir: () => {}
-  })
-  await worker.refresh(true)
-  assert.ok(orca.shown().includes('ワークスペースを開くと'))
-  assert.match(logs.join('\n'), /runtime unavailable/)
-})
-
-test('a refresh posts only a real change, at once', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  await writeTranscript(home, SESSION_A, { cwd: '/work/app', prompt: 'App goal' })
-  await writeTasks(home, SESSION_A, [task(1, 'One', 'pending'), task(2, 'Two', 'pending')])
-  const worker = createMilestoneWorker({
-    orca,
-    home,
-    cli: 'orca',
-    readOrca: async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] }),
-    watchDir: () => {}
-  })
-  await worker.refresh(true)
-  assert.equal(orca.posts.length, 1)
-  assert.equal(orca.posts[0].event, 'view.changed')
-
-  await worker.refresh(true)
-  assert.equal(orca.posts.length, 1, 'the same view is not posted again')
-
-  await writeTasks(home, SESSION_A, [task(1, 'One', 'completed')])
-  await worker.refresh()
-  assert.equal(orca.posts.length, 2)
-  assert.ok(orca.shown().includes('1 / 2'))
-})
-
-test('view answers with what the panel should show, even when Orca could not be read', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  const timers = []
-  const realSetInterval = globalThis.setInterval
-  globalThis.setInterval = (...args) => {
-    const timer = realSetInterval(...args)
-    timers.push(timer)
-    return timer
-  }
-  try {
-    const worker = createMilestoneWorker({
-      orca,
-      home,
-      cli: 'orca',
-      readOrca: async () => {
-        throw new Error('runtime unavailable')
-      },
-      watchDir: () => {}
-    })
-    const { html } = await worker.view()
-    assert.ok(html.includes('ワークスペースを開くと'))
-    assert.equal(timers.length, 1, 'one slow sync; the rest is driven by events')
-  } finally {
-    globalThis.setInterval = realSetInterval
-    timers.forEach(clearInterval)
-  }
-})
-
-test('an agent event asks Orca again only when that pane changed state', async () => {
-  const home = await makeHome()
-  let asked = 0
-  const worker = createMilestoneWorker({
-    orca: fakeOrca(),
-    home,
-    cli: 'orca',
-    readOrca: async () => {
-      asked += 1
-      return { active: null, agents: [] }
-    },
-    watchDir: () => {}
-  })
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 200))
-
-  worker.agentChanged({ paneKey: 'a', state: 'working' })
-  await settle()
-  assert.equal(asked, 1)
-
-  worker.agentChanged({ paneKey: 'a', state: 'working' })
-  await settle()
-  assert.equal(asked, 1, 'the same state again')
-
-  worker.agentChanged({ paneKey: 'a', state: 'waiting' })
-  worker.agentChanged({ paneKey: 'b', state: 'working' })
-  await settle()
-  assert.equal(asked, 2, 'changes close together make one refresh')
-
-  worker.agentChanged({ paneKey: 'b', state: 'working', mainAgent: { state: 'waiting' } })
-  await settle()
-  assert.equal(asked, 3, 'the main agent of a pane counts too')
-})
-
-test('openWorkspace opens the listed workspace at the path, and only logs a miss or a failure', async () => {
-  const orca = fakeOrca()
-  const logs = []
-  orca.log = (line) => logs.push(line)
-  const calls = []
-  let fail = false
-  orca.host = {
-    call: async (method, params) => {
-      calls.push([method, params])
-      if (fail) throw new Error('refused')
-      return {
-        workspaces: [
-          { id: 'identity:a', path: '/work/a' },
-          { id: 'identity:b', path: '/work/b' }
-        ]
-      }
-    }
-  }
-  const worker = createMilestoneWorker({ orca, home: await makeHome(), cli: 'orca', watchDir: () => {} })
-
-  assert.deepEqual(await worker.openWorkspace('/work/b'), { opened: true })
-  assert.deepEqual(calls.at(-1), ['workspace.open', { workspaceId: 'identity:b' }])
-
-  calls.length = 0
-  assert.deepEqual(await worker.openWorkspace('/work/gone'), { opened: false })
-  assert.deepEqual(calls.map(([method]) => method), ['workspace.list'])
-  assert.match(logs.join('\n'), /no workspace to open at \/work\/gone/)
-
-  fail = true
-  assert.deepEqual(await worker.openWorkspace('/work/a'), { opened: false })
-  assert.match(logs.join('\n'), /could not open the workspace: refused/)
-})
-
-test('sessions of Orca\'s Claude accounts show, with linked or own task and transcript folders', async () => {
-  const home = await makeHome()
-  const orca = fakeOrca()
-  const linked = await orcaAccount(home, 'account-linked')
-  const own = await orcaAccount(home, 'account-own', { linked: false })
-  await writeTranscript(home, SESSION_A, { cwd: '/work/app', prompt: 'Linked account goal', configDir: linked })
-  await writeTasks(home, SESSION_A, [task(1, 'Read', 'completed'), task(2, 'Write', 'pending')])
-  await writeTranscript(home, SESSION_B, { cwd: '/work/app', prompt: 'Own account goal', configDir: own })
-  const ownTasks = join(own, 'tasks', SESSION_B)
-  await mkdir(ownTasks, { recursive: true })
-  await writeFile(join(ownTasks, '1.json'), JSON.stringify(task(1, 'Only', 'in_progress')))
-  const worker = createMilestoneWorker({
-    orca,
-    home,
-    cli: 'orca',
-    readOrca: async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] }),
-    watchDir: () => {}
-  })
-  await worker.refresh(true)
-  const html = orca.shown()
-  assert.ok(html.includes('Linked account goal'))
-  assert.ok(html.includes('1 / 2'))
-  assert.ok(html.includes('Own account goal'))
-  assert.ok(html.includes('0 / 1'))
+    workspace('other', { steps: { source: 'tasks', goal: 'Goal', done: hostile, total: 3, items: [] } })
+  ] })
+  await h.worker.start()
+  assert.equal(documentOf(h).querySelector('img'), null)
 })

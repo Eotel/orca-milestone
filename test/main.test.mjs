@@ -7,23 +7,39 @@ import { createLaunchHook, withProgressTool, withTaskInstructions } from '../src
 
 const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'orca-plugin.json'), 'utf8'))
 
-test('registers the commands and events declared in the manifest, and starts nothing on activate', () => {
+test('registers manifest commands and events, and starts the core reads for the status bar on activate', async (t) => {
   const commands = []
   const events = []
-  const handlers = []
+  const handlers = new Map()
   const hooks = []
-  activate({
-    host: { call: () => assert.fail('activate must not call the host') },
+  const requested = []
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    requested.push(url)
+    if (url.endsWith('/events')) return new Response(new ReadableStream({}))
+    return Response.json(url.endsWith('/workspaces') ? { workspaces: [], version: 1 } : { items: [], version: 1 })
+  })
+  const calls = []
+  await activate({
+    host: { call: async (method, params) => {
+      calls.push([method, params])
+      if (method === 'workspace.readContext') return null
+      if (method === 'workspace.list') return { workspaces: [] }
+      if (method === 'settings.get') return { settings: { boardUrl: 'http://board.test:17317' } }
+      return { ok: true }
+    } },
     events: { on: (event) => events.push(event) },
     commands: { register: (id) => commands.push(id) },
-    panels: { handle: (name) => handlers.push(name), post: () => assert.fail('activate must not post') },
+    panels: { handle: (name, handler) => handlers.set(name, handler), post: () => {} },
     hooks: { on: (hook) => hooks.push(hook) },
     log: () => {}
   })
   assert.deepEqual(commands, manifest.contributes.commands.map((command) => command.id))
   assert.deepEqual(events, manifest.contributes.events.map((event) => event.on))
-  assert.deepEqual(handlers, ['view.get', 'workspace.open', 'next.send'])
+  assert.deepEqual([...handlers.keys()], ['view.get', 'workspace.open', 'next.send', 'ask.answer', 'board.open'])
   assert.deepEqual(hooks, manifest.contributes.hooks.map((hook) => hook.event))
+  assert.ok(requested.includes('http://board.test:17317/api/v1/turn'))
+  assert.ok(calls.some(([method, params]) => method === 'statusBar.update' && params.visible === false))
+  assert.equal(manifest.contributes.statusBarItems[0].command, 'milestone.openTurn')
 })
 
 const paths = { execPath: '/Apps/Orca.app/MacOS/Orca', serverPath: '/plugin/src/progress-server.mjs' }

@@ -5,8 +5,8 @@
   "id": "milestone",
   "publisher": "eotel",
   "name": "Milestone",
-  "version": "0.9.0",
-  "description": "Shows the tasks Claude Code and Codex are working through in the focused workspace as milestones in the right sidebar.",
+  "version": "0.10.0",
+  "description": "Shows orca-board asks, steps and next actions in Orca, with a status bar count of your turn.",
   "author": { "name": "Eotel", "url": "https://github.com/Eotel" },
   "repository": "https://github.com/Eotel/orca-milestone",
   "license": "MIT",
@@ -15,9 +15,17 @@
   "main": "main.mjs",
   "contributes": {
     "panels": [{ "id": "milestones", "title": "Milestones", "icon": "flag", "entry": "panel/index.html" }],
-    "commands": [{ "id": "milestone.refresh", "title": "Milestone: Refresh" }],
+    "commands": [
+      { "id": "milestone.refresh", "title": "Milestone: Refresh" },
+      { "id": "milestone.openTurn", "title": "Milestone: 自分の番の最も古い項目を開く" }
+    ],
+    "statusBarItems": [{ "id": "turn", "icon": "bell", "command": "milestone.openTurn" }],
+    "settings": [
+      { "key": "boardUrl", "title": "ボードの URL", "type": "string", "default": "http://127.0.0.1:7317" },
+      { "key": "boardWorkspace", "title": "ボードを開く workspace", "type": "string", "default": "triage-lead" }
+    ],
     "events": [{ "on": "agent.status.changed" }, { "on": "workspace.changed" }],
     "hooks": [{ "event": "agent.launch.before" }]
   },
-  "capabilities": [{ "kind": "workspace:read" }, { "kind": "agent:read" }, { "kind": "workspace:write" }]
+  "capabilities": [{ "kind": "workspace:read" }, { "kind": "agent:read" }, { "kind": "workspace:write" }, { "kind": "settings:own" }]
 }

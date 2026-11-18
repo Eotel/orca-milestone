@@ -1,201 +1,72 @@
 # orca-milestone
 
-[Orca](https://github.com/stablyai/orca) の plugin です。フォーカス中のワークスペースで Claude Code や Codex が進めているタスクを、ゴールまでのマイルストーンとして右サイドバーに表示します。タスクが進むと、すぐに表示が変わります。
-
-> [!WARNING]
-> Orca の plugin 機能は Alpha です。この plugin は Orca 1.4.247 以上を対象にしています。
-
-<p>
-  <img src="docs/images/panel.png" width="300" alt="Milestones パネル。上部にフォーカス中のワークスペースのゴールとタスク、下端にほかのワークスペースの進捗が並ぶ">
-  <img src="docs/images/panel-hover.png" width="300" alt="ほかのワークスペースの行にマウスを乗せると、その行が広がってゴールとタスクが表示される">
-</p>
-
-左が通常の表示、右がほかのワークスペースの行にマウスを乗せたときです（ワークスペース名やタスクはすべてダミーデータです）。
+[Orca](https://github.com/stablyai/orca) の plugin です。[orca-board](https://github.com/Eotel/orca-board) の ask と step を、ターミナル横のパネルに表示します。
 
 ## この fork の違い
 
-[andoshin11/orca-milestone](https://github.com/andoshin11/orca-milestone) を、[orca-board](https://github.com/Eotel/orca-board) の担当の流れに合わせて変えています。
+[andoshin11/orca-milestone](https://github.com/andoshin11/orca-milestone) を、orca-board の core を使うクライアントに変えています。進捗の取得、次の作業の判断、lane への送信はボードが行います。パネルは core が返した内容を表示し、回答や選択を core に送ります。
 
-- **Orca の Claude アカウント:** `~/.claude` に加えて、Orca がアカウントごとに使う設定フォルダー（`~/Library/Application Support/orca/claude-profiles/<id>/home`）の `sessions`・`teams`・`tasks`・`projects` も読みます。
-- **次の作業のカード:** エージェントのタスク一覧の未完了の手順から作り、回答の文には何も書かせません。押すと、依頼文を orca-board の `send`（`$ORCA_BRIEFS_BIN/send`、既定は `~/.cache/orca-briefs/bin/send`）で送り、送ったことがボードに残ります。`send` が送れなかったときは、カードの下に失敗を出します。送り直しの控えは残さないので、押し直してください。
-- **出さないカード:** 質問・許可・「最新の指示で再開」のカードは出しません。担当は `triage-notify` で伺い、許可を求めずに動くためです。起動時に許可のフック（`--settings`）も足しません。
-- **起動時の指示が届く範囲:** タスクに分ける指示は、Orca の起動元（新しいタブ、`orca agent launch`、ワークスペースの作成、オートメーション）から起動した Claude Code と Codex にだけ足します。`orca terminal create --command` で起動したエージェントには `agent.launch.before` が呼ばれないため、指示もタスクの道具も足されません。
-- **インストール:** カタログには載せていません。**プラグインを追加 → Git URL から…** で `https://github.com/Eotel/orca-milestone` を入れます。plugin のキーは `eotel.milestone` です。
+ボードはこの Mac で起動しておく必要があります。既定の接続先は `http://127.0.0.1:7317` です。変更する場合は plugin 設定 `boardUrl` を書き換え、plugin を再起動します（`orca plugin restart eotel.milestone`）。ボードに接続できない間は接続先を 1 行で表示し、ステータスバーの件数を隠します。
 
 ## できること
 
-- **進捗を見る:** フォーカス中のワークスペースのゴールとタスク、完了数を表示します。ワークスペースを切り替えると、表示も切り替わります。
-- **ほかのワークスペースを見る:** パネルの下端に、Claude Code・Codex が動いているほかのワークスペースを、入力や許可を待っているものから順に並べます。
-- **詳しく見る:** 行にマウスを乗せると、その行が広がってゴールとタスクが出ます。
-- **移動する:** 行を押すと、そのワークスペースへ移動します。
-- **次の作業を頼む:** フォーカス中のワークスペースのエージェントがターンを終えたとき、タスク一覧の未完了の手順をカードとして縦に並べます。押すと、その手順を進める依頼文を orca-board の `send` でエージェントに送ります。
+- **ask に回答する:** フォーカス中の workspace の ask を新しい順に表示します。各質問で 1 つずつ選択して「回答を送信」を押します。選択肢のない ask には文章で回答できます。
+- **step を見る:** ゴール、完了数、未完了の step を表示します。完了した step は「✓ 済み N」にまとめます。
+- **次の作業を頼む:** ボードが返した提案を押すと、core が lane に送信します。ほかの workspace でも「Claude に送る」「Codex に送る」で最初の提案を送れます。
+- **自分の番を見る:** ボードで自分の番になっている項目と件数を、ボードが付けた見出しで表示します。行を押すと workspace に移動します。ステータスバーを押すと、移動先のある最古の項目を開きます。
+- **ボードを開く:** Orca のブラウザタブで全体のボードを開きます。plugin 設定 `boardWorkspace` の workspace（既定は `triage-lead`）を使い、見つからなければフォーカス中の workspace を使います。既存のボードタブがあれば切り替えます。
 
-Claude Code と Codex に対応しています。
+SSE と Orca のイベントで更新し、30 秒ごとにも取得します。表示が変わったときだけ DOM を更新するため、回答の選択や入力は更新後も残ります。ask が変更された場合は選択をクリアします。
 
 ## 必要なもの
 
-- Orca 1.4.247 以上（macOS のデスクトップアプリで確認）。1.4.246 以前は plugin を読み込めません。
+- Orca 1.4.248 以上
+- この Mac で動く orca-board（core API v1 対応）
 
-Claude Code と Codex には、追加の設定は要りません。Orca のターミナルでエージェントを新しく起動すると、plugin が次を自動で行います。どちらも、そのセッションだけに効きます。
+Claude Code と Codex に対応しています。Orca から新しく起動したときに、次の設定をそのセッションだけに追加します。
 
-| エージェント | 起動時に行うこと |
+| エージェント | 起動時の設定 |
 |---|---|
-| Claude Code | タスク用のツールを有効にし（`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`）、ゴール付きのタスクで作業を記録するよう指示を足します（`--append-system-prompt`）。Orca の Agent Teams での起動（`orca claude-teams`）も同じです。すでに `--append-system-prompt` を指定している起動には足しません。 |
-| Codex | 進捗を記録する MCP ツール（`update_progress`）と、その使い方の指示を足します。Codex にはタスク一覧の機能がないためです。`~/.codex` の設定は変更しません。 |
+| Claude Code | タスク用ツールを有効にし、ゴール付きのタスクを記録する指示を追加します。Agent Teams も同じです。既存の `--append-system-prompt` があれば追加しません。 |
+| Codex | 進捗を記録する MCP ツール `update_progress` と指示を追加します。`~/.codex` の設定は変更しません。 |
 
-保存したセッションの再開、Orca の外で起動したエージェント、`orca terminal create --command` で起動したエージェントには、この処理は効きません。
-- **Claude Code:** それらでも使うなら、`~/.claude/settings.json` と `~/.claude/CLAUDE.md` に次を加えます。
-
-  ```json
-  { "env": { "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1" } }
-  ```
-
-  ```markdown
-  - 作業を始めるときは TaskCreate で手順をタスクにし、どのタスクにも `metadata: {"goal": "<今の依頼で目指していることを 1 行で>"}` を付ける。
-  - ゴールが変わったら、前のゴールの未完了タスクを completed か deleted にしてから、新しいゴールを付けたタスクを作る。
-  ```
-
-- **Codex:** 新しく起動し直してください。
+保存したセッションの再開、Orca の外での起動、`orca terminal create --command` での起動には適用されません。Codex の進捗は `~/.orca-milestone/progress/` に記録し、ボードが読み取ります。
 
 ## インストール
 
-1. Orca の **設定 → プラグイン → ⋯ → カタログのソース…** で、次のカタログを追加します。Ref は `main` です。
+1. Orca の **設定 → プラグイン → プラグインを追加 → Git URL から…** で `https://github.com/Eotel/orca-milestone` を指定します。
+2. フルアクセスと権限を確認して有効化します。plugin のキーは `eotel.milestone` です。
+3. 右サイドバーの旗アイコンを開きます。
 
-   ```text
-   https://github.com/andoshin11/orca-plugins
-   ```
+| 権限 | 用途 |
+|---|---|
+| `workspace:read` | フォーカス中の workspace と移動先の特定 |
+| `workspace:write` | workspace の移動 |
+| `agent:read` | Agent ステータスの通知 |
+| `settings:own` | `boardUrl`・`boardWorkspace` の取得 |
 
-2. プラグインの一覧で Milestone を探して、**確認してインストール** を押します。
-3. アクセスできる範囲を確かめて **インストールして有効化** を押し、公開元の確認でも **インストール** を押します。
-4. 右サイドバーの旗アイコンを開きます。
-5. Orca のターミナルで Claude Code か Codex を新しく起動します。すでに動いているセッションには、起動時の処理が効いていません。
-
-**プラグインを追加 → Git URL から…** で `https://github.com/andoshin11/orca-milestone` を入れることもできます。ただし、この方法ではアップデートの機能が使えません。
-
-### 承認する内容
-
-Node のワーカーを動かすので、フルアクセスの plugin として承認します。そのほかに使うものは次のとおりです。
-
-| 種類 | 内容 | 使い道 |
-|---|---|---|
-| 権限 `workspace:read` | ワークスペースの名前・ブランチなどの読み取り | 表示と移動先の特定 |
-| 権限 `agent:read` | Agent ステータスの通知 | 表示の更新 |
-| 権限 `workspace:write` | ワークスペースを開く、組み込みコマンドを実行する | 行を押したときの移動（これにしか使いません） |
-| フック `agent.launch.before` | エージェントの起動直前の処理 | [起動時の設定](#必要なもの) |
-
-カードを押したときは、orca-board の `send` で依頼文を送ります。Claude Code の書きかけを退避する Ctrl+S だけは、Orca に同梱の CLI（`orca terminal send`）で送ります。どちらも権限の対象ではなく、ワーカーがコマンドを実行して行います。
-
-### 更新
-
-カタログから入れた場合は、Orca の **プラグインを自動でアップデート**（既定でオン）により、自動で更新されます。新しい権限が増えるときは、確認を求められます。
-
-手動で更新するには、プラグインの一覧の **アップデート** タブか Milestone のページで、**アップデート** を押します。出ないときは、一覧の更新ボタンを押してカタログを読み直してください。
-
-- Git URL から入れた場合は、更新の機能が使えません。同じ URL でインストールし直して、**プラグインを有効にする** をもう一度押します。
-- 動いているセッションには、起動時の処理の変更は効きません。新しく起動し直してください。
-
-### アンインストール
-
-プラグインの一覧で Milestone を開き、右上の **⋯** から **削除…** を選びます。Codex の進捗ファイルを置く `~/.orca-milestone/` は残るので、不要なら削除してください。
+ボード用ブラウザタブの切替・作成には Orca 同梱の CLI を使います。依頼文の送信はボードの core API を使います。
 
 ## 表示されないとき
 
-- パネルに「このワークスペースのエージェントはまだタスクを作っていません」と出る場合、エージェントがタスクを記録していません。記録するかどうかはエージェントが作業の大きさで決めるため、短い作業では記録しないこともあります。進捗を出したいときは「タスクに分けて進めて」と頼みます。
-- plugin を入れる前や更新の前から動いているセッションは、起動時の処理が効いていません。新しく起動し直してください。
-- Codex の場合は、`~/.orca-milestone/progress/` に進捗ファイルができているかを確かめます。ファイルがなければ、Codex に `update_progress` ツールがあるか尋ねてください。
+- 接続エラーが出る場合は、表示された URL でボードが起動しているか確認します。
+- step が出ない場合は、ボード側にも step があるか確認します。
+- 起動時の指示を反映するにはエージェントを新しく起動します。Codex の `update_progress` は進捗ファイルだけに書き込み、承認なしで動きます。
 
-### 知っておきたい制約
-
-- Codex の指示は `developer_instructions` として渡します。`~/.codex/config.toml` に同じ設定があると、Orca から起動したセッションではこの plugin の指示に置き換わります。
-- `update_progress` は、Codex の承認なしで動きます。書き込むのは `~/.orca-milestone/progress/` の進捗ファイルだけで、セッションが終わると消えます。
-- 確認したのは、ローカルの macOS でターミナルとして起動した場合です。チャット表示での起動と SSH 先のワークスペースは確認していません。
-
-## 表示の細かいルール
-
-- フォーカス中のワークスペースは、セッションごとに新しい順で最大 3 件、ほかのワークスペースは最大 8 件を表示します。
-- ゴールは、Codex では記録されたものを使います。Claude では次の順で決めます。
-  1. Claude がタスクに書いたゴール（`metadata.goal`）。いちばん新しいタスクのものを使い、ほかのゴールのタスクは表示しません。
-  2. 一覧の最初のタスクを作る直前に送った依頼文
-  3. セッションの最初の依頼文
-- ほかのワークスペースは、要確認（入力待ち・許可待ち）のもの、タスクが残っているもの、すべて完了したものの順に並びます。後の 2 つは、タスクが新しく動いた順です。「作業中」はターンごとに変わるので、並びには影響しません。
-- Orca は、Claude Code が裏で動かしているシェルがあると、ターンを終えて入力を待っていても「作業中」と返します。そのため、Orca が作業中と返す Claude は transcript の末尾を読み、最後のターンの後に `turn_duration` があってその後にプロンプトやツールの結果がなければ、「待機中（裏で実行中）」と表示します（ほかのワークスペースの行は「裏で実行中」）。提案のカードも、待機中のときと同じように出ます。
-- 行の印は、オレンジの点が要確認か実行中のタスクあり、緑のチェックがすべて完了、グレーの点がそれ以外です。
-- 広げた行の長い一覧はスクロールでき、未完了のタスクの位置から表示します。名前の行の上でホイールを回しても動きます。タスクが 9 件以上の行は、広がった部分へマウスを入れられます。
-- 行はキーボードで選んで、Enter か Space でも移動できます。
-- タスク一覧は、そのセッションが動いている間だけ表示します。動いているセッションは、Claude は `~/.claude` と Orca の各アカウントの設定フォルダーの `sessions/<pid>.json` に書かれる情報で、Codex はプロセスが動いているかで判断します。
-- Claude はすべてのタスクを完了するとタスク一覧のファイルを消しますが、セッションが動いている間は完了した状態のまま表示を残します。plugin を再起動した後も、transcript に残る TaskCreate / TaskUpdate の記録から組み立て直します。
-- Orca の Agent Teams で起動した Claude（`claude --teammate-mode`）にも対応しています。
-- 次の作業のカードは、ワークスペースに動いているメインのエージェントが 1 つだけで、ターンを終えて（`done`）いて、そのワークスペースで動いているセッションのタスク一覧が 1 つだけで、未完了の手順があるときに出ます。タスク一覧が 2 つ以上あると、押したカードが別のセッションの手順を送るおそれがあるため出しません。進行中の手順を先に、未完了の手順を待っている手順を除いて 3 つまで出し、各カードに手順の名前を出します。押すと「「<手順>」を進めてください」を送ります。
-- カードを押したときに送るのはカードの ID と番号だけで、依頼文はワーカーがその時点のタスク一覧から読み直します。前のターンのカードや、2 度目の押下は何も送りません。
-- Claude Code の入力欄に書きかけの文字があるときは、送る前に Ctrl+S で退避し、送ったあとに戻します。Codex には退避の機能がないので、入力欄に文字があれば送らず、カードの下に理由を出します。
-- 新しく出たカードは、1.5 秒の間は薄く表示して押下を受け付けません。
-
-## 仕組み
-
-```mermaid
-flowchart LR
-  claude["Claude Code"] -- "タスクを書き込む" --> tasks["~/.claude/tasks/&lt;session-id&gt;/*.json<br/>（Agent Teams では session-&lt;先頭8桁&gt;）"]
-  claude -- "会話を記録" --> transcript["~/.claude/projects/*/&lt;session-id&gt;.jsonl<br/>（cwd・依頼文）"]
-  worker["ワーカー（main.mjs）"] -- "fs.watch" --> tasks
-  worker -- "先頭だけ読む" --> transcript
-  orca["Orca"] -- "workspace.changed<br/>agent.status.changed" --> worker
-  worker -- "orca worktree ps（イベントのあと・30 秒ごと）" --> orca
-  panel["パネル（panel/）"] -- "view.get（開いたとき）" --> worker
-  worker -- "view.changed（変わったとき）" --> panel
-  panel -- "workspace.open（行を押したとき）" --> worker
-  panel -- "next.send（カードを押したとき）" --> worker
-  worker -- "orca-board の send" --> orca
-  codex["Codex"] -- "update_progress（MCP）" --> mcp["src/progress-server.mjs"]
-  mcp -- "進捗ファイル" --> worker
-  orca -- "agent.launch.before（起動の直前）" --> worker
-  worker -- "workspace.list / workspace.open" --> orca
-```
-
-- パネルの HTML・CSS・スクリプトは `panel/` に置いた固定のファイルです。表示する本文はワーカーが作り、パネルは Orca の通信路（`orca.plugin.request` / `orca.plugin.on`）で受け取ります。
-- パネルは受け取った本文との差分だけを DOM に反映します。更新してもパネルは作り直されないので、ちらつかず、スクロール位置や広がった行も保たれます。
-- タスクが完了すると、進捗バーが伸び、色が変わり、取り消し線が左から右へ引かれます。ワークスペースやゴールが変わったときは、別の一覧として動きなしで切り替えます。OS の視差効果を減らす設定では動きません。
-- ワーカーは内容が変わったときだけ本文を送ります。パネルを開いたとき（サイドバーのタブを切り替えて戻ったときを含む）は、その時点の本文を取りに行きます。
-- Agent Teams を率いる Claude は、タスク一覧をチーム名（`session-<セッション ID の先頭 8 桁>`）のフォルダーに書きます。どのセッションのものかは、`~/.claude` と Orca の各アカウントの `teams/<チーム名>/config.json` のリーダーのセッション ID か、なければ先頭 8 桁が一致する transcript で決めます。
-- 次の作業のカードは、タスク一覧の手順の名前だけから作ります。エージェントの回答と依頼文は読みません。
-- フォーカス中のワークスペースのパスは、`workspace.readContext` が返さないため、Orca に同梱の CLI（`orca worktree ps`）で調べます。セッションは、transcript に記録された作業ディレクトリがそのパスの中にあるものを表示します。
-- フォーカスの移動は `workspace.changed`、どのワークスペースの Agent の変化も `agent.status.changed` で知り、そのときだけ `orca worktree ps` で取り直します（1 回 0.1〜0.2 秒）。イベントで分からない変化（イベントなしに終わったセッションなど）のために、30 秒ごとにも取り直します。
-- Orca は 5 分間やりとりのないワーカーを止めるため、パネルは開いている間、1 分ごとに本文を取りに行きます。パネルを閉じているとワーカーは止まることがあり、次にパネルを開いたときかイベントが届いたときに起動します。
-- Codex の MCP サーバーは、Orca 自身のバイナリを Node として動かすので、Node のインストールは要りません。Codex のセッションごとに 1 つ起動し、親である Codex のプロセス ID を付けたファイルに進捗を書きます。ワーカーはそのプロセスが終わるとファイルを消します。
+Codex の指示は `developer_instructions` で渡すため、Orca から起動したセッションでは既存の同じ設定を置き換えます。SSH 先の workspace とチャット表示での起動は未確認です。
 
 ## 開発
-
-clone したフォルダーを開発フォルダーとして読み込むと、変更がすぐ反映されます。同じ plugin をインストールしていても、開発フォルダーのほうが優先されます。
-
-```sh
-git clone https://github.com/andoshin11/orca-milestone.git
-orca plugin dev load /path/to/orca-milestone   # 承認が必要なときは、内容を確かめて --approve <fingerprint> を付けて実行し直す
-orca plugin dev unload /path/to/orca-milestone # 外す
-```
-
-テストと manifest の検証は次のとおりです。
 
 ```sh
 npm ci
 npm test
-
-# Orca 本体の parser で orca-plugin.json を検証する（stablyai/orca の checkout が必要）
-ORCA_SOURCE_DIR=/path/to/orca npm run check:manifest
+ORCA_SOURCE_DIR=/path/to/stablyai/orca npm run check:manifest
+node scripts/render-sample.mjs /tmp/milestone-sample.html
 ```
 
-README のスクリーンショットは、ダミーデータでパネルを描いたページから撮っています。
+テストでは fetch、Orca host、CLI runner をモックします。実ボードや lane には接続しません。manifest の検証には Orca の checkout と、そこから参照できる `zod` が必要です。CI は v1.4.247 の parser を使います。
 
-```sh
-node scripts/render-sample.mjs /tmp/sample.html          # 通常の表示
-node scripts/render-sample.mjs /tmp/sample-hover.html --hover   # 行にマウスを乗せたとき
-node scripts/render-sample.mjs /tmp/sample-next.html --next     # 作業を終え、次の作業のカードが出たとき（docs/images/panel-next.png）
-```
-
-ワーカーのコードを変えたら、Settings → Plugins で Milestone をいったんオフにしてからオンに戻すと、新しいコードで起動します。CI では `engines.orca` に対応する Orca のタグ（v1.4.247）を取得して、manifest を検証します。
-
-### リリース
-
-1. バージョンを上げて main にマージし、タグと GitHub Release を公開します。
-2. [andoshin11/orca-plugins](https://github.com/andoshin11/orca-plugins) の手順に従い、タグのコミットで `orca plugin release-entry` を実行して、`orca-catalog.json` の `releases` の先頭に足します。
+サンプルはダミーデータを使います。`--light` でライトテーマ、`--next` で次の作業を表示できます。
 
 ## ライセンス
 

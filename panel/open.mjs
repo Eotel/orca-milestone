@@ -1,8 +1,18 @@
-// Opens the workspace of a pressed row. The listener sits on the root, so it keeps working however
-// the rows are patched. Only a row's head carries data-open, the part that keeps the row expanded.
-
-export function openOnPress(root, open) {
-  root.addEventListener('click', (event) => {
+export function openOnPress(root, open, openBoard) {
+  let opening = false
+  root.addEventListener('click', async (event) => {
+    const board = event.target.closest('[data-board]')
+    if (board) {
+      if (opening) return
+      opening = true
+      board.disabled = true
+      let opened = false
+      try { opened = (await openBoard()).opened } catch {}
+      opening = false
+      board.disabled = false
+      root.querySelector('footer .status').textContent = opened ? '' : 'ボードを開けませんでした。'
+      return
+    }
     const head = event.target.closest('[data-open]')
     if (head) open(head.getAttribute('data-open'))
   })

@@ -1,182 +1,20 @@
-// Keeps the panel in step with the focused workspace, the task lists of Claude and Codex and the
-// state of every agent Orca runs. The worker renders the body of the panel and posts it; the panel patches
-// its DOM, so an update keeps the frame, the scroll position and a row's expansion.
-import { watch } from 'node:fs'
-import { mkdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
-import {
-  claudePaths,
-  claudeRoots,
-  findListTranscript,
-  currentGoal,
-  isListRunning,
-  readRunningSessionIds,
-  readTasksFromTranscript,
-  listRecentTaskLists,
-  readPromptBeforeTask,
-  readTaskList,
-  readTranscriptHead,
-  createPendingReader,
-  turnEnded
-} from './claude-sessions.mjs'
-import { readCodexProgress } from './codex-progress.mjs'
-import { buildModel, isInside } from './model.mjs'
-import { createLaneSender } from './lane-send.mjs'
-import { createNextSender, offersOf } from './next-actions.mjs'
-import { readWorkspaces, runOrca } from './orca-cli.mjs'
-import { progressDir } from './progress-server.mjs'
+import { createCoreClient } from './core-client.mjs'
+import { buildModel } from './model.mjs'
 import { renderBody } from './render.mjs'
+import { openBoardTab } from './orca-cli.mjs'
 
-const TASK_LIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
-// Events say when the focus or an agent changes. This catches what they do not, such as a session
-// that ended without one.
-const SYNC_MS = 30_000
-const DEBOUNCE_MS = 150
-const REQUEST_RETRY_MS = 30_000
-
-export function createMilestoneWorker({
-  orca,
-  home,
-  cli,
-  readOrca = readWorkspaces,
-  runCli = runOrca,
-  sendToLane = createLaneSender({ home, cli }),
-  now = Date.now,
-  watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange)
-}) {
-  const { tasksRoot } = claudePaths(home)
-  // Task folders under watch, ~/.claude's and those of Orca's Claude accounts that are not links to it.
-  const watched = new Set()
-  const progressRoot = progressDir(home)
-  // Transcript heads never change once written; null entries are retried on the next refresh.
-  const heads = new Map()
-  // The request a list was made for, keyed by list and the subject of its first task.
-  const requests = new Map()
-  // Claude deletes a list's task files once every task is completed. The last tasks seen per
-  // list keep a finished goal on screen as done instead of letting it vanish.
-  const lastTasks = new Map()
-  // Lists already replayed from a transcript, by list and the time it last changed.
-  const replayed = new Map()
-  let workspace = null
-  let agents = []
-  let offers = []
-  let worktrees = []
-  const runArgs = (args, timeout) => runCli(cli, args, timeout)
-  // Only the steps left in a task list become cards. Agents ask through triage-notify and run without
-  // permission prompts, and a restart would go around the lane tools, so the readers for questions,
-  // permissions and restarts are left out and offersOf finds none of those.
-  const readersFor = (sessions) => ({
-    // Orca calls an agent working while its background shells run, even after its turn.
-    readTurnEnded: createPendingReader(home, turnEnded),
-    // With two lists in a workspace, the agent a card reaches may not be the one whose steps it shows.
-    readTasks: async (path) => {
-      const inside = sessions.filter((session) => session.cwd && isInside(session.cwd, path))
-      return inside.length === 1 ? inside[0].tasks : []
-    }
-  })
-  let lastHtml = null
-  let started = null
-  let timer = null
-  let pendingFocus = false
-  let running = null
+export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, runCli }) {
+  const core = createCoreClient({ fetch, url })
+  let focusedId
+  let lastHtml
+  let started
+  let running
   let rerun = false
-  // The last state heard per pane. Agents repeat a state with every hook they fire.
-  const paneStates = new Map()
-
-  async function headOf(roots, listId) {
-    if (heads.has(listId)) return heads.get(listId)
-    const transcript = await findListTranscript(roots, listId)
-    const head = transcript ? await readTranscriptHead(transcript).catch(() => null) : null
-    if (head) heads.set(listId, { ...head, transcript })
-    return heads.get(listId) ?? null
-  }
-
-  /**
-   * What a list is for right now. A session moves on to new goals, so its first prompt is only
-   * a last resort: the goal Claude wrote on the tasks comes first, then the request the first
-   * task was created for.
-   */
-  async function goalOf(listId, head, tasks) {
-    const current = currentGoal(tasks)
-    if (current.goal) return current
-    const key = `${listId}\n${tasks[0].subject}`
-    let request = requests.get(key)
-    // A miss is retried later: the transcript can trail the task files, and a teammate's tasks
-    // are not in the lead's transcript at all, so a whole read is not repeated every refresh.
-    if (!request || (request.prompt === null && now() - request.at > REQUEST_RETRY_MS)) {
-      const prompt = await readPromptBeforeTask(head.transcript, tasks[0].subject).catch(() => null)
-      request = { prompt, at: now() }
-      requests.set(key, request)
-    }
-    return { goal: request.prompt ?? head.goal, tasks }
-  }
-
-  function isFinished(tasks) {
-    return tasks.length > 0 && tasks.every((task) => task.status === 'completed')
-  }
-
-  /**
-   * A finished list whose files Claude already deleted, replayed from its transcript. That
-   * happens when the worker starts after the list was finished, as after a restart.
-   */
-  async function replayFinished(roots, list) {
-    const key = `${list.listId}\n${list.updatedAt}`
-    if (replayed.has(key)) return
-    replayed.set(key, true)
-    // Only a list that ever had tasks keeps a high-water mark.
-    if (!(await stat(join(list.dir, '.highwatermark')).catch(() => null))) return
-    const head = await headOf(roots, list.listId)
-    if (!head?.transcript) return
-    const tasks = await readTasksFromTranscript(head.transcript).catch(() => [])
-    if (isFinished(tasks)) lastTasks.set(list.listId, tasks)
-  }
-
-  function watchTasks(tasksRoots) {
-    for (const root of tasksRoots) {
-      if (watched.has(root)) continue
-      watched.add(root)
-      watchDir(root, (_event, name) => {
-        if (name && !String(name).endsWith('.lock')) schedule()
-      })
-    }
-  }
-
-  async function allSessions() {
-    const roots = await claudeRoots(home)
-    // Watching starts with start(); a folder that appears later, as for a new account, joins then.
-    if (started) watchTasks(roots.tasksRoots)
-    const running = await readRunningSessionIds(roots.sessionsRoots)
-    const lists = await listRecentTaskLists(roots.tasksRoots, { maxAgeMs: TASK_LIST_MAX_AGE_MS })
-    const sessions = []
-    for (const list of lists) {
-      // A list shows only while its session runs: ending the session or removing its
-      // workspace takes it off the panel.
-      if (!isListRunning(list.listId, running)) {
-        lastTasks.delete(list.listId)
-        continue
-      }
-      const files = await readTaskList(list.dir)
-      if (files.length === 0 && !lastTasks.has(list.listId)) await replayFinished(roots, list)
-      const tasks = currentTasks(list.listId, files)
-      // A team creates its list when it starts, and most stay empty; they are not looked up.
-      if (tasks.length === 0) continue
-      const head = await headOf(roots, list.listId)
-      if (!head?.cwd) continue
-      sessions.push({ ...list, cwd: head.cwd, ...(await goalOf(list.listId, head, tasks)) })
-    }
-    sessions.push(...(await readCodexProgress(progressRoot)))
-    return sessions.sort((a, b) => b.updatedAt - a.updatedAt)
-  }
-
-  function currentTasks(listId, tasks) {
-    if (tasks.length > 0) {
-      lastTasks.set(listId, tasks)
-      return tasks
-    }
-    const previous = lastTasks.get(listId) ?? []
-    // A list emptied before it was finished was cleared on purpose; show nothing for it.
-    return isFinished(previous) ? previous : []
-  }
+  let timer
+  let sync
+  let disconnect
+  let turnItems = []
+  let turnLabel = ''
 
   function publish(html) {
     if (html === lastHtml) return
@@ -184,49 +22,32 @@ export function createMilestoneWorker({
     orca.panels.post('view.changed', { html })
   }
 
-  /** What a panel shows when it opens; it starts the worker's refreshes if nothing has yet. */
-  async function view() {
-    await start()
-    return { html: lastHtml ?? renderBody({ kind: 'no-workspace' }) }
-  }
-
-  /** Shows the workspace at a path. A pressed row may be stale by now, so a miss is only logged. */
-  async function openWorkspace(path) {
-    try {
-      const { workspaces } = await orca.host.call('workspace.list')
-      const target = workspaces.find((candidate) => candidate.path === path)
-      if (!target) {
-        orca.log(`milestone: no workspace to open at ${path}`)
-        return { opened: false }
-      }
-      await orca.host.call('workspace.open', { workspaceId: target.id })
-      return { opened: true }
-    } catch (error) {
-      orca.log(`milestone: could not open the workspace: ${error.message}`)
-      return { opened: false }
+  async function refreshOnce() {
+    if (focusedId === undefined) {
+      const context = await orca.host.call('workspace.readContext')
+      if (focusedId === undefined) focusedId = context?.workspaceId ?? null
     }
+    const results = await Promise.allSettled([
+      core.workspaces(), core.turn(), orca.host.call('workspace.list')
+    ])
+    for (const result of results) if (result.status === 'rejected') throw result.reason
+    const [snapshot, turn, { workspaces }] = results.map((result) => result.value)
+    const focused = workspaces.find((row) => row.id === focusedId)
+    turnItems = turn.items
+    turnLabel = turn.label
+    publish(renderBody(buildModel(focused, snapshot.workspaces, turn, now())))
+    await updateStatus()
   }
 
-  async function refreshOnce(askOrca) {
-    const sessions = await allSessions()
-    if (askOrca || !workspace) {
-      try {
-        let found
-        ;({ active: workspace, agents, offers: found, worktrees = [] } = await readOrca(cli, runCli, readersFor(sessions)))
-        offers = found ?? []
-      } catch (error) {
-        orca.log(`milestone: could not read the workspaces: ${error.message}`)
-      }
-    } else {
-      // Only the tasks changed: the cards follow them without asking Orca again.
-      offers = await offersOf(worktrees, readersFor(sessions))
-    }
-    publish(renderBody(buildModel(workspace, sessions, agents, offers)))
+  function updateStatus() {
+    const oldest = turnItems[0]
+    return orca.host.call('statusBar.update', oldest ? {
+      id: 'turn', text: `${turnLabel} ${turnItems.length}`, tone: 'warning',
+      tooltip: `${oldest.workspace}\n${oldest.title}`, visible: true
+    } : { id: 'turn', visible: false })
   }
 
-  /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
-  async function refresh(focusChanged = false) {
-    pendingFocus ||= focusChanged
+  async function refresh() {
     if (running) {
       rerun = true
       return running
@@ -234,63 +55,109 @@ export function createMilestoneWorker({
     running = (async () => {
       do {
         rerun = false
-        const focus = pendingFocus
-        pendingFocus = false
         try {
-          await refreshOnce(focus)
+          await refreshOnce()
         } catch (error) {
+          turnItems = []
+          publish(renderBody({ unavailable: true, url: core.url }))
+          await updateStatus()
           orca.log(`milestone: refresh failed: ${error.message}`)
         }
       } while (rerun)
     })()
-    try {
-      await running
-    } finally {
-      running = null
-    }
+    try { await running } finally { running = null }
   }
 
-  const sendOffer = createNextSender({
-    readOffers: async () => (await readOrca(cli, runCli, readersFor(await allSessions()))).offers ?? [],
-    run: runArgs,
-    sendPrompt: sendToLane
-  })
-
-  /** Sends the prompt of a pressed button to its agent; the panel shows what went wrong. */
-  async function sendNext(request) {
-    try {
-      const result = await sendOffer(request)
-      if (result.sent) schedule(true)
-      return result
-    } catch (error) {
-      orca.log(`milestone: could not send the next step: ${error.message}`)
-      return { sent: false, reason: 'failed' }
-    }
-  }
-
-  function schedule(focusChanged = false) {
-    pendingFocus ||= focusChanged
+  function schedule() {
     clearTimeout(timer)
-    timer = setTimeout(() => void refresh(), DEBOUNCE_MS)
-  }
-
-  function agentChanged({ paneKey, state, mainAgent }) {
-    const key = `${state}\n${mainAgent?.state ?? ''}`
-    if (paneStates.get(paneKey) === key) return
-    paneStates.set(paneKey, key)
-    schedule(true)
+    timer = setTimeout(() => void refresh(), 150)
+    timer.unref?.()
   }
 
   function start() {
     started ??= (async () => {
-      await mkdir(tasksRoot, { recursive: true })
-      await mkdir(progressRoot, { recursive: true })
-      watchDir(progressRoot, () => schedule())
-      setInterval(() => schedule(true), SYNC_MS)
-      await refresh(true)
+      disconnect = core.listen(schedule)
+      sync = setInterval(schedule, 30_000)
+      sync.unref?.()
+      await refresh()
     })()
     return started
   }
 
-  return { start, refresh, schedule, agentChanged, view, openWorkspace, sendNext }
+  function stop() {
+    disconnect?.()
+    clearTimeout(timer)
+    clearInterval(sync)
+  }
+
+  async function view() {
+    await start()
+    return { html: lastHtml }
+  }
+
+  async function openWorkspace(path) {
+    try {
+      const { workspaces } = await orca.host.call('workspace.list')
+      const target = workspaces.find((row) => row.path === path)
+      if (!target) return { opened: false }
+      await orca.host.call('workspace.open', { workspaceId: target.id })
+      return { opened: true }
+    } catch (error) {
+      orca.log(`milestone: could not open workspace: ${error.message}`)
+      return { opened: false }
+    }
+  }
+
+  async function openTurn() {
+    await start()
+    const oldest = turnItems.find((item) => item.path)
+    return oldest ? openWorkspace(oldest.path) : { opened: false }
+  }
+
+  function workspaceChanged({ context }) {
+    focusedId = context?.workspaceId ?? null
+    schedule()
+  }
+
+  async function sendNext(request) {
+    try {
+      const result = await core.sendNext(request)
+      schedule()
+      return result
+    } catch (error) {
+      orca.log(`milestone: send failed: ${error.message}`)
+      return { sent: false, reason: 'failed' }
+    }
+  }
+
+  async function answerAsk(request) {
+    try {
+      await core.answerAsk(request)
+      schedule()
+      return { sent: true }
+    } catch (error) {
+      if (error.status === 409) schedule()
+      orca.log(`milestone: answer failed: ${error.message}`)
+      return { sent: false, reason: error.status === 409 ? 'changed' : 'failed' }
+    }
+  }
+
+  async function openBoard() {
+    try {
+      await start()
+      const [{ settings }, { workspaces }] = await Promise.all([
+        orca.host.call('settings.get'), orca.host.call('workspace.list')
+      ])
+      const target = workspaces.find((row) => row.name === (settings.boardWorkspace ?? 'triage-lead')) ?? workspaces.find((row) => row.id === focusedId)
+      if (!target) return { opened: false }
+      await orca.host.call('workspace.open', { workspaceId: target.id })
+      await openBoardTab(cli, target.path, core.url, runCli)
+      return { opened: true }
+    } catch (error) {
+      orca.log(`milestone: could not open board: ${error.message}`)
+      return { opened: false }
+    }
+  }
+
+  return { start, refresh, schedule, view, stop, openWorkspace, openTurn, workspaceChanged, agentChanged: schedule, sendNext, answerAsk, openBoard }
 }
