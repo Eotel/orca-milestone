@@ -15,6 +15,7 @@ export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, r
   let disconnect
   let turnItems = []
   let turnLabel = ''
+  let offline = false
 
   function publish(html) {
     if (html === lastHtml) return
@@ -35,12 +36,14 @@ export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, r
     const focused = workspaces.find((row) => row.id === focusedId)
     turnItems = turn.items
     turnLabel = turn.label
+    offline = false
     publish(renderBody(buildModel(focused, snapshot.workspaces, turn, now())))
     await updateStatus()
   }
 
   function updateStatus() {
     const oldest = turnItems[0]
+    if (offline) return orca.host.call('statusBar.update', { id: 'turn', text: 'ボード未接続', tone: 'danger', tooltip: `ボードに接続できません ${core.url}`, visible: true })
     return orca.host.call('statusBar.update', oldest ? {
       id: 'turn', text: `${turnLabel} ${turnItems.length}`, tone: 'warning',
       tooltip: `${oldest.workspace}\n${oldest.title}`, visible: true
@@ -59,6 +62,7 @@ export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, r
           await refreshOnce()
         } catch (error) {
           turnItems = []
+          offline = true
           publish(renderBody({ unavailable: true, url: core.url }))
           await updateStatus()
           orca.log(`milestone: refresh failed: ${error.message}`)
@@ -126,7 +130,7 @@ export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, r
       return result
     } catch (error) {
       orca.log(`milestone: send failed: ${error.message}`)
-      return { sent: false, reason: 'failed' }
+      return { sent: false, reason: 'failed', message: error.message }
     }
   }
 
@@ -138,7 +142,7 @@ export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, r
     } catch (error) {
       if (error.status === 409) schedule()
       orca.log(`milestone: answer failed: ${error.message}`)
-      return { sent: false, reason: error.status === 409 ? 'changed' : 'failed' }
+      return { sent: false, reason: error.status === 409 ? 'changed' : 'failed', message: error.message }
     }
   }
 

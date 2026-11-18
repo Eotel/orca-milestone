@@ -27,7 +27,7 @@ test('start reads both core resources and renders the focused path, posting only
   assert.equal(documentOf(h).querySelector('.steps-card'), null)
 })
 
-test('turn count updates the status bar, opens the oldest reachable item and hides on zero or outage', async (t) => {
+test('turn count updates the status bar, opens the oldest reachable item, hides on zero and reports an outage', async (t) => {
   const h = harness(t, { items: [
     { ...workspace(), title: 'Remote oldest', path: null, opened_at: '2026-11-17T12:00:00+09:00' },
     { ...workspace(), title: 'Local next', opened_at: '2026-11-18T10:00:00+09:00' }
@@ -44,7 +44,7 @@ test('turn count updates the status bar, opens the oldest reachable item and hid
   await h.worker.refresh()
   assert.match(h.html(), /ボードに接続できません.*http:\/\/board.test/)
   assert.ok(documentOf(h).querySelector('[data-board]'), 'the board entry remains available during an outage')
-  assert.deepEqual(h.status(), { id: 'turn', visible: false })
+  assert.deepEqual(h.status(), { id: 'turn', text: 'ボード未接続', tone: 'danger', tooltip: 'ボードに接続できません http://board.test', visible: true })
   h.state.offline = false
   await h.worker.refresh()
   assert.match(h.html(), /Core goal/)
@@ -104,13 +104,15 @@ test('a refresh in flight coalesces further requests into one later refresh', as
 test('asks precede steps newest first, preserve questions and recommended labels, and escape core text', async (t) => {
   const { ask } = await import('./core-fixture.mjs')
   const h = harness(t, { workspaces: [workspace('app', { asks: [
-    ask({ id: 'ask:old', opened_at: '2026-11-16T10:00:00+09:00', questions: [], text: '<script>free text</script>' }),
+    ask({ id: 'ask:old', opened_at: '2026-11-16T10:00:00+09:00', questions: [], text: '<script>free text</script>', waits_on: 'triage' }),
     ask({ title: 'Newer', questions: [ask().questions[0], { ...ask().questions[0], question: '表示場所は？' }] })
   ] })] })
   await h.worker.start()
   const doc = documentOf(h)
-  const cards = [...doc.querySelectorAll('.ask-card')]
+  const cards = [...doc.querySelectorAll('[data-ask]')]
   assert.deepEqual(cards.map((card) => card.dataset.ask), ['ask:a', 'ask:old'])
+  assert.deepEqual(cards.map((card) => [card.classList.contains('ask-card'), card.querySelector('h2 span').textContent]),
+    [[true, 'ask'], [false, 'triage への ask']], 'only an ask in the turn list is marked as the owner\'s')
   assert.equal(cards[0].querySelector('time').textContent, new Date(ask().opened_at).toTimeString().slice(0, 5))
   assert.equal(cards[1].querySelector('time').textContent, '11/16')
   assert.equal(cards[0].querySelectorAll('.question').length, 2)
@@ -135,7 +137,8 @@ test('turn rows show elapsed ages and openable paths; other rows use core counts
     workspace('steps-only', { agents: [] }),
     workspace('finished', { agents: [], steps: { source: 'brief', goal: null, done: 5, total: 5, items: [] } }),
     workspace('agent-only', { steps: { source: 'none', goal: null, done: 0, total: 0, items: [] } }),
-    workspace('pair', { agents: [{ agent: 'claude', state: 'done' }, { agent: 'claude', state: 'done' }] })
+    workspace('pair', { agents: [{ agent: 'claude', state: 'done' }, { agent: 'claude', state: 'done' }] }),
+    workspace('asking', { agents: [{ agent: 'claude', state: 'waiting' }], steps: { source: 'none', goal: null, done: 0, total: 0, items: [] } })
   ] })
   await h.worker.start()
   const doc = documentOf(h)
@@ -144,10 +147,10 @@ test('turn rows show elapsed ages and openable paths; other rows use core counts
   assert.equal(doc.querySelectorAll('.turn [data-open]').length, 2)
   assert.equal(doc.querySelector('.turn h2 span').textContent, 'Owner の番')
   assert.equal(doc.querySelector('.turn .title').textContent, 'Review the design')
-  assert.deepEqual([...doc.querySelectorAll('.others .name')].map((node) => node.textContent), ['ready', 'busy', 'steps-only', 'pair'])
+  assert.deepEqual([...doc.querySelectorAll('.others .name')].map((node) => node.textContent), ['asking', 'ready', 'busy', 'steps-only', 'pair'])
   assert.equal(doc.querySelector('.others [data-key="/work/pair"] .row-agent').textContent, 'Claude 待機中 ×2')
-  const ready = doc.querySelector('.others .row')
-  assert.match(ready.textContent, /Codex 待機中.*step 1 \/ 3.*Core prompt.*Codex に送る/s)
+  const ready = doc.querySelector('.others [data-key="/work/ready"]')
+  assert.match(ready.textContent, /Codex 待機中.*step 1 \/ 3.*Core prompt.*Codex に送信/s)
   assert.equal(ready.querySelector('[data-next]').dataset.path, '/work/ready')
   assert.equal(ready.querySelector('[data-next]').dataset.index, '0')
   assert.equal(doc.querySelector('[data-board]').textContent, 'ボードを開く')
@@ -164,7 +167,7 @@ test('next and ask submits go through core, preserving refusal reasons and refre
   }
   h.state.postResult = { error: 'revision changed' }
   h.state.postStatus = 409
-  assert.deepEqual(await h.worker.answerAsk({ id: 'ask:a', revision: 3, answers: [{ question: 0, label: '今週' }], text: '' }), { sent: false, reason: 'changed' })
+  assert.deepEqual(await h.worker.answerAsk({ id: 'ask:a', revision: 3, answers: [{ question: 0, label: '今週' }], text: '' }), { sent: false, reason: 'changed', message: 'revision changed' })
   const before = h.requests.length
   t.mock.timers.tick(150)
   await new Promise((resolve) => setImmediate(resolve))
@@ -244,7 +247,7 @@ test('one failed GET waits for the other GET before allowing a further refresh',
   assert.equal(h.requests.filter(([url]) => url.endsWith('/workspaces')).length, 2)
   release()
   await Promise.all([one, two])
-  assert.deepEqual(h.status(), { id: 'turn', visible: false })
+  assert.equal(h.status().text, 'ボード未接続')
 })
 
 test('values from the core cannot add markup to the panel', async (t) => {
@@ -262,7 +265,8 @@ test('values from the core cannot add markup to the panel', async (t) => {
 })
 
 test('the focused cards show what a press sends and no form for an ask the core refuses', async (t) => {
-  const h = harness(t, { workspaces: [workspace('app', {
+  const { turnItem } = await import('./core-fixture.mjs')
+  const h = harness(t, { items: [turnItem({ id: 'ask:m' })], workspaces: [workspace('app', {
     agents: [{ agent: 'claude', state: 'done' }],
     asks: [{ id: 'ask:m', revision: 1, title: 'Pick', text: 'Pick', opened_at: '2026-11-18T11:30:00+09:00', waits_on: 'Owner', can_answer: false,
       questions: [{ question: 'Pick several', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }], multiSelect: true }] }],
@@ -273,5 +277,5 @@ test('the focused cards show what a press sends and no form for an ask the core 
   assert.equal(doc.querySelector('.ask-card .ask-text').textContent, 'Pick several')
   assert.equal(doc.querySelector('.ask-card button, .ask-card textarea'), null)
   assert.deepEqual([...doc.querySelectorAll('.proposal .suggestion')].map((node) => [node.querySelector('p').textContent, node.querySelector('button').textContent]),
-    [['「Step」を進めてください', 'Claude に送る']])
+    [['「Step」を進めてください', 'Claude に送信']])
 })

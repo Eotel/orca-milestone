@@ -25,15 +25,19 @@ test('each question needs one choice; ticks survive patches and submit sends lab
   assert.equal(p.submit().disabled, true)
   p.option(1, 0).click()
   assert.equal(p.submit().disabled, false)
+  const note = p.root.querySelector('textarea[aria-label="補足（任意）"]')
+  note.value = '直してから'
+  note.dispatchEvent(new p.root.ownerDocument.defaultView.Event('input', { bubbles: true }))
   patchChildren(p.root, p.h.html())
   p.presses.restore()
   assert.equal(p.option(0, 1).getAttribute('aria-pressed'), 'true')
+  assert.equal(p.root.querySelector('textarea').value, '直してから')
   p.submit().click()
   p.submit().click()
   await flush()
   const posts = p.h.requests.filter(([, init]) => init.method === 'POST')
   assert.equal(posts.length, 1)
-  assert.deepEqual(JSON.parse(posts[0][1].body), { revision: 3, answers: [{ question: 0, label: '来週' }, { question: 1, label: '今週' }], text: '' })
+  assert.deepEqual(JSON.parse(posts[0][1].body), { revision: 3, answers: [{ question: 0, label: '来週' }, { question: 1, label: '今週' }], text: '直してから' })
   patchChildren(p.root, p.h.html())
   p.presses.restore()
   p.submit().click()
@@ -63,9 +67,14 @@ test('a free text reply survives patches and sends the text; whitespace alone ca
 
 test('a 409 explains the changed ask; a new revision clears ticks and settles before it accepts choices', async (t) => {
   const p = await panel(t)
+  p.h.state.postResult = { error: 'この commitment には回答を送れません' }
+  p.h.state.postStatus = 400
+  p.option(0, 0).click()
+  p.submit().click()
+  await flush()
+  assert.equal(p.root.querySelector('.ask-card .status').textContent, '送信に失敗しました。この commitment には回答を送れません')
   p.h.state.postResult = { error: 'changed' }
   p.h.state.postStatus = 409
-  p.option(0, 0).click()
   p.submit().click()
   await flush()
   assert.match(p.root.querySelector('.ask-card .status').textContent, /ask が変わった/)

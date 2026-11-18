@@ -107,7 +107,7 @@ test('a pressed card is sent once, and a refusal says why and lets the cards be 
   b.click()
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.deepEqual(requests, [{ path: '/work/app', offer: 'o1', index: 1 }])
-  assert.match(root.querySelector('.status').textContent, /書きかけ/)
+  assert.match(root.querySelector('.status').textContent, /未送信のテキスト/)
   assert.ok(!root.querySelector('.next').classList.contains('busy'))
 
   answer = { sent: true }

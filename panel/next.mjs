@@ -1,9 +1,9 @@
 export const SETTLE_MS = 1500
 
 const MESSAGES = {
-  stale: '状況が変わったため送りませんでした。',
-  typing: 'Codex の入力欄に書きかけがあるため送りませんでした。',
-  changed: 'ask が変わったため送りませんでした。',
+  stale: '次の作業が変わったため送信しませんでした。',
+  typing: 'Codex の入力欄に未送信のテキストがあるため送信しませんでした。',
+  changed: 'ask が変わったため送信しませんでした。',
   failed: '送信に失敗しました。'
 }
 
@@ -69,7 +69,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
           status.setAttribute('role', 'status')
           next.appendChild(status)
         }
-        status.textContent = MESSAGES[outcome.reason] ?? MESSAGES.failed
+        status.textContent = outcome.reason === 'failed' && outcome.message ? MESSAGES.failed + outcome.message : MESSAGES[outcome.reason] ?? MESSAGES.failed
       } else {
         next.querySelector('.status')?.remove()
       }
