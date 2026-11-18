@@ -25,6 +25,8 @@ const focus = row('search-filters', agent(), steps, { asks: [{
       { label: '前回の条件', description: '' }, { label: 'すべて', description: '' }
     ], multiSelect: false }
   ]
+}, {
+  id: 'ask:lead', revision: 1, title: 'ログの保存期間', text: 'ログの保存期間は 30 日で足りますか？', opened_at: '2026-11-18T20:12:00+09:00', waits_on: 'triage', can_answer: true, questions: []
 }] })
 if (flag === '--next') {
   focus.agents = agent('done')
@@ -32,6 +34,7 @@ if (flag === '--next') {
   focus.next = { id: 'sample-next', agent: 'claude', suggestions: [{ label: '条件を URL に残す', prompt: '「絞り込みの条件を URL に残す」を進めてください' }] }
 }
 const workspaces = [focus,
+  row('release-notes', agent('waiting'), { source: 'none', goal: null, done: 0, total: 0, items: [] }),
   row('checkout-retry', agent(), { ...steps, goal: '決済の再試行を直す', done: 0, total: 5 }),
   row('docs-refresh', agent('done'), { ...steps, goal: 'README を更新する', done: 1, total: 3 }, {
     next: { id: 'sample-other', agent: 'claude', suggestions: [{ label: '手順を書き直す', prompt: '「インストール手順を書き直す」を進めてください' }] }
