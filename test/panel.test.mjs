@@ -143,12 +143,17 @@ test('a press on the focused card says it is sending, and a board that answers t
   assert.match(status, /結果を確認できません/)
 })
 
-test('a request Orca stopped waiting for is not called a failure either', async () => {
+test('a request Orca stopped waiting for is not called a failure, and is not sent again since it may have arrived', async () => {
   const root = body('<div class="next"><button data-next="o1" data-path="/work/app" data-index="0">A</button></div>')
-  sendOnPress(root, async () => { throw Object.assign(new Error('next.send timed out after 30000ms'), { code: 'timeout' }) }, { settleMs: 0 })
+  let sends = 0
+  sendOnPress(root, async () => { sends++; throw Object.assign(new Error('next.send timed out after 30000ms'), { code: 'timeout' }) }, { settleMs: 0 })
   root.querySelector('[data-next]').click()
   await flush()
   assert.match(root.querySelector('.status').textContent, /結果を確認できません/)
+  root.querySelector('[data-next]').click()
+  await flush()
+  assert.equal(sends, 1)
+  assert.ok(root.querySelector('.next').classList.contains('busy'))
 })
 
 test('the panel waits for a send as long as Orca allows', async (t) => {

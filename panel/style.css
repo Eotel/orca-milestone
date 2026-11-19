@@ -88,6 +88,7 @@ textarea { display: block; width: 100%; margin: 6px 0 8px; padding: 6px 8px; res
 .row-next, .suggestion { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .row-next { margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--orca-border); }
 .row-next p, .suggestion p { flex: 1 1 100px; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.row-next .status { flex-basis: 100%; }
 .row-next .action, .suggestion .action { flex: none; width: auto; min-height: 28px; padding: 4px 8px; font-size: 11px; font-weight: 600; }
 footer { flex: none; padding-top: 8px; }
 footer button { width: 100%; min-height: 30px; padding: 5px 10px; border: 1px solid var(--orca-border); border-radius: var(--orca-radius, 6px); color: var(--orca-foreground); background: var(--orca-card); }

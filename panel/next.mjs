@@ -8,6 +8,9 @@ const REFUSALS = {
   failed: '送信に失敗しました。'
 }
 
+const UNREPEATABLE = new Set(['changed', 'timeout'])
+const repeatable = (outcome) => !outcome?.sent && !UNREPEATABLE.has(outcome?.reason)
+
 function refusalOf({ reason, message }) {
   return reason === 'failed' && message ? REFUSALS.failed + message : REFUSALS[reason] ?? REFUSALS.failed
 }
@@ -55,7 +58,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
       const key = offerOf(control)
       const outcome = outcomes.get(key)
       next.classList.toggle('settling', settling(key))
-      next.classList.toggle('busy', pending.has(key) || outcome?.sent === true)
+      next.classList.toggle('busy', pending.has(key) || !repeatable(outcome))
       for (const option of next.querySelectorAll('[data-option]')) {
         const chosen = picks.get(key)?.[Number(option.dataset.question)] === Number(option.dataset.option)
         option.classList.toggle('chosen', chosen)
@@ -67,7 +70,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
       if (submit) {
         const count = Number(submit.dataset.count)
         const complete = count > 0 ? (picks.get(key) ?? []).filter((pick) => pick !== undefined).length === count : Boolean(drafts.get(key)?.trim())
-        submit.disabled = !complete || pending.has(key) || outcome?.sent === true || outcome?.reason === 'changed'
+        submit.disabled = !complete || pending.has(key) || !repeatable(outcome)
       }
       const sending = pending.has(key) || outcome?.sent === true
       for (const button of next.querySelectorAll('[data-next], [data-submit]')) {
@@ -112,7 +115,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
     const pressed = event.target.closest('[data-next], [data-form], [data-submit]')
     if (!pressed) return
     const key = offerOf(pressed)
-    if (settling(key) || pending.has(key) || outcomes.get(key)?.sent || outcomes.get(key)?.reason === 'changed') return
+    if (settling(key) || pending.has(key) || !repeatable(outcomes.get(key))) return
     if (pressed.hasAttribute('data-option')) {
       const chosen = picks.get(key) ?? []
       chosen[Number(pressed.dataset.question)] = Number(pressed.dataset.option)
