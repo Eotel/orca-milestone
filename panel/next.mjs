@@ -1,10 +1,25 @@
 export const SETTLE_MS = 1500
 
-const MESSAGES = {
+const REFUSALS = {
   stale: '次の作業が変わったため送信しませんでした。',
   typing: 'Codex の入力欄に未送信のテキストがあるため送信しませんでした。',
   changed: 'ask が変わったため送信しませんでした。',
+  timeout: '送信の結果を確認できませんでした。',
   failed: '送信に失敗しました。'
+}
+
+const UNREPEATABLE = new Set(['changed', 'timeout'])
+const repeatable = (outcome) => !outcome?.sent && !UNREPEATABLE.has(outcome?.reason)
+
+function refusalOf({ reason, message }) {
+  return reason === 'failed' && message ? REFUSALS.failed + message : REFUSALS[reason] ?? REFUSALS.failed
+}
+
+function statusOf(waiting, outcome) {
+  if (waiting) return { state: 'sending', text: '送信中…' }
+  if (outcome?.sent === true) return { state: 'sent', text: '送信しました。' }
+  if (outcome?.sent === false) return { state: 'refused', text: refusalOf(outcome) }
+  return null
 }
 
 function offerOf(element) {
@@ -27,7 +42,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
       arrived.delete(offer)
       picks.delete(offer)
       drafts.delete(offer)
-      outcomes.delete(offer)
+      if (outcomes.get(offer)?.reason !== 'timeout') outcomes.delete(offer)
     }
     for (const offer of shown) {
       if (arrived.has(offer)) continue
@@ -43,7 +58,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
       const key = offerOf(control)
       const outcome = outcomes.get(key)
       next.classList.toggle('settling', settling(key))
-      next.classList.toggle('busy', pending.has(key) || outcome?.sent === true)
+      next.classList.toggle('busy', pending.has(key) || !repeatable(outcome))
       for (const option of next.querySelectorAll('[data-option]')) {
         const chosen = picks.get(key)?.[Number(option.dataset.question)] === Number(option.dataset.option)
         option.classList.toggle('chosen', chosen)
@@ -55,13 +70,14 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
       if (submit) {
         const count = Number(submit.dataset.count)
         const complete = count > 0 ? (picks.get(key) ?? []).filter((pick) => pick !== undefined).length === count : Boolean(drafts.get(key)?.trim())
-        submit.disabled = !complete || pending.has(key) || outcome?.sent === true || outcome?.reason === 'changed'
+        submit.disabled = !complete || pending.has(key) || !repeatable(outcome)
       }
       const sending = pending.has(key) || outcome?.sent === true
       for (const button of next.querySelectorAll('[data-next], [data-submit]')) {
         button.classList.toggle('sending', sending && (button.hasAttribute('data-submit') || Number(button.dataset.index) === outcome?.index))
       }
-      if (outcome?.sent === false) {
+      const shown = statusOf(pending.has(key), outcome)
+      if (shown) {
         let status = next.querySelector('.status')
         if (!status) {
           status = next.ownerDocument.createElement('p')
@@ -69,7 +85,8 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
           status.setAttribute('role', 'status')
           next.appendChild(status)
         }
-        status.textContent = outcome.reason === 'failed' && outcome.message ? MESSAGES.failed + outcome.message : MESSAGES[outcome.reason] ?? MESSAGES.failed
+        status.dataset.state = shown.state
+        status.textContent = shown.text
       } else {
         next.querySelector('.status')?.remove()
       }
@@ -82,7 +99,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
     outcomes.set(key, { index: request.index })
     restore()
     let result
-    try { result = await (answer ? answerAsk(request) : send(request)) } catch { result = { sent: false, reason: 'failed' } }
+    try { result = await (answer ? answerAsk(request) : send(request)) } catch (error) { result = { sent: false, reason: error?.code === 'timeout' ? 'timeout' : 'failed' } }
     pending.delete(key)
     outcomes.set(key, { ...result, index: request.index })
     restore()
@@ -98,7 +115,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
     const pressed = event.target.closest('[data-next], [data-form], [data-submit]')
     if (!pressed) return
     const key = offerOf(pressed)
-    if (settling(key) || pending.has(key) || outcomes.get(key)?.sent || outcomes.get(key)?.reason === 'changed') return
+    if (settling(key) || pending.has(key) || !repeatable(outcomes.get(key))) return
     if (pressed.hasAttribute('data-option')) {
       const chosen = picks.get(key) ?? []
       chosen[Number(pressed.dataset.question)] = Number(pressed.dataset.option)

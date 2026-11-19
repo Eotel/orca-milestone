@@ -1,9 +1,12 @@
+const READ_TIMEOUT_MS = 10_000
+const SEND_TIMEOUT_MS = 110_000
+
 export function createCoreClient({ url = 'http://127.0.0.1:7317', fetch = globalThis.fetch } = {}) {
   url = url.replace(/\/$/, '')
 
   async function request(path, body, keepRefusal = false) {
     const response = await fetch(`${url}${path}`, {
-      signal: AbortSignal.timeout(body ? 60_000 : 10_000),
+      signal: AbortSignal.timeout(body ? SEND_TIMEOUT_MS : READ_TIMEOUT_MS),
       ...(body ? {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Orca-Board-Client': 'milestone' },

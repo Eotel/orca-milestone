@@ -41,7 +41,11 @@ export function harness(t, options = {}) {
       streams.push(controller)
       init.signal.addEventListener('abort', () => controller.close(), { once: true })
     } }))
-    if (init.method === 'POST') return Response.json(state.postResult, { status: state.postStatus })
+    if (init.method === 'POST') {
+      if (state.postGate) await state.postGate
+      if (state.postError) throw state.postError
+      return Response.json(state.postResult, { status: state.postStatus })
+    }
     if (url.endsWith('/workspaces') && state.failWorkspaces) throw new Error('workspaces failed')
     if (url.endsWith('/turn') && state.turnGate) await state.turnGate
     if (state.readGate) await state.readGate

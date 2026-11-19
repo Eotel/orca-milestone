@@ -3,6 +3,8 @@ import { buildModel } from './model.mjs'
 import { renderBody } from './render.mjs'
 import { openBoardTab } from './orca-cli.mjs'
 
+const errorReason = (error) => error.name === 'TimeoutError' ? 'timeout' : 'failed'
+
 export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, runCli }) {
   const core = createCoreClient({ fetch, url })
   let focusedId
@@ -130,7 +132,7 @@ export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, r
       return result
     } catch (error) {
       orca.log(`milestone: send failed: ${error.message}`)
-      return { sent: false, reason: 'failed', message: error.message }
+      return { sent: false, reason: errorReason(error), message: error.message }
     }
   }
 
@@ -142,7 +144,7 @@ export function createMilestoneWorker({ orca, fetch, url, now = Date.now, cli, r
     } catch (error) {
       if (error.status === 409) schedule()
       orca.log(`milestone: answer failed: ${error.message}`)
-      return { sent: false, reason: error.status === 409 ? 'changed' : 'failed', message: error.message }
+      return { sent: false, reason: error.status === 409 ? 'changed' : errorReason(error), message: error.message }
     }
   }
 
