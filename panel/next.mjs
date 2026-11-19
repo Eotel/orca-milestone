@@ -42,7 +42,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
       arrived.delete(offer)
       picks.delete(offer)
       drafts.delete(offer)
-      outcomes.delete(offer)
+      if (outcomes.get(offer)?.reason !== 'timeout') outcomes.delete(offer)
     }
     for (const offer of shown) {
       if (arrived.has(offer)) continue
