@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { JSDOM } from 'jsdom'
+import { sendOnPress } from '../panel/next.mjs'
 import { openOnPress } from '../panel/open.mjs'
 import { patchChildren } from '../panel/patch.mjs'
+import { harness, workspace, at, flush } from './core-fixture.mjs'
 
 const panelDir = join(import.meta.dirname, '..', 'panel')
 
@@ -117,7 +119,52 @@ test('a pressed card is sent once, and a refusal says why and lets the cards be 
   assert.equal(requests.length, 2, 'a second click while one is on its way is ignored')
   assert.ok(a.classList.contains('sending'))
   assert.ok(root.querySelector('.next').classList.contains('busy'))
-  assert.equal(root.querySelector('.status'), null, 'a successful retry clears the previous refusal')
+  assert.match(root.querySelector('.status').textContent, /送信しました/, 'a successful retry replaces the previous refusal')
+})
+
+test('a press on the focused card says it is sending, and a board that answers too late is not called a failure', async (t) => {
+  const next = { id: 'o1', agent: 'claude', suggestions: [{ prompt: '「PR を merge する」を進めてください' }] }
+  const h = harness(t, { workspaces: [workspace('app', { agents: [{ agent: 'claude', state: 'done', since: at }], next })] })
+  await h.worker.start()
+  let answer
+  h.state.postGate = new Promise((resolve) => { answer = resolve })
+  h.state.postError = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+  const root = body(h.html())
+  const presses = sendOnPress(root, h.worker.sendNext, { settleMs: 0 })
+  root.querySelector('.proposal [data-next]').click()
+  await flush()
+  patchChildren(root, h.html())
+  presses.restore()
+  assert.match(root.querySelector('.proposal .status').textContent, /送信中/)
+  answer()
+  await flush()
+  const status = root.querySelector('.proposal .status').textContent
+  assert.doesNotMatch(status, /失敗/)
+  assert.match(status, /結果を確認できません/)
+})
+
+test('a request Orca stopped waiting for is not called a failure either', async () => {
+  const root = body('<div class="next"><button data-next="o1" data-path="/work/app" data-index="0">A</button></div>')
+  sendOnPress(root, async () => { throw Object.assign(new Error('next.send timed out after 30000ms'), { code: 'timeout' }) }, { settleMs: 0 })
+  root.querySelector('[data-next]').click()
+  await flush()
+  assert.match(root.querySelector('.status').textContent, /結果を確認できません/)
+})
+
+test('the panel waits for a send as long as Orca allows', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const { window } = new JSDOM('<!doctype html><body><div class="next"><button data-next="o1" data-path="/work/app" data-index="0">A</button></div></body>')
+  const requests = []
+  window.orca = { plugin: { on: () => {}, request: async (name, input, options) => {
+    requests.push([name, options])
+    return name === 'view.get' ? { html: window.document.body.innerHTML } : { sent: true }
+  } } }
+  Object.assign(globalThis, { window, document: window.document })
+  t.after(() => { delete globalThis.window; delete globalThis.document })
+  await import('../panel/main.mjs')
+  window.document.querySelector('[data-next]').click()
+  await flush()
+  assert.deepEqual(requests.find(([name]) => name === 'next.send')[1], { timeoutMs: 120_000 })
 })
 
 test('a card that just came in the place of the answered one takes no presses for a moment', async () => {

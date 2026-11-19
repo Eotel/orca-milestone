@@ -68,6 +68,8 @@ textarea { display: block; width: 100%; margin: 6px 0 8px; padding: 6px 8px; res
 .action.sending, .action.chosen { background: color-mix(in oklch, var(--ms-bar) 18%, var(--orca-card)); border-color: var(--ms-done); }
 .status { margin: 6px 0 0; font-size: 11px; color: var(--ms-ask); overflow-wrap: anywhere; }
 .status:empty { display: none; }
+.status[data-state="sending"] { color: var(--orca-muted-foreground); }
+.status[data-state="sent"] { color: var(--ms-done); }
 .turn-head { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 0 8px; align-items: center; padding: 3px 0; }
 .dot { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--orca-muted-foreground); }
 .dot.attention { background: var(--ms-ask); }

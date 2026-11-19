@@ -4,11 +4,11 @@ import { patchChildren } from './patch.mjs'
 
 const RETRY_MS = 3000
 const KEEP_ALIVE_MS = 60_000
+const ORCA_LONGEST_REQUEST_MS = 120_000
 
 let pushes = 0
-const presses = sendOnPress(document.body, (request) => window.orca.plugin.request('next.send', request), {
-  answerAsk: (request) => window.orca.plugin.request('ask.answer', request)
-})
+const sendAndWait = (name) => (request) => window.orca.plugin.request(name, request, { timeoutMs: ORCA_LONGEST_REQUEST_MS })
+const presses = sendOnPress(document.body, sendAndWait('next.send'), { answerAsk: sendAndWait('ask.answer') })
 let loaded = false
 
 const { plugin } = window.orca

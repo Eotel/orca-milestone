@@ -1,10 +1,22 @@
 export const SETTLE_MS = 1500
 
-const MESSAGES = {
+const REFUSALS = {
   stale: '次の作業が変わったため送信しませんでした。',
   typing: 'Codex の入力欄に未送信のテキストがあるため送信しませんでした。',
   changed: 'ask が変わったため送信しませんでした。',
+  timeout: '送信の結果を確認できませんでした。',
   failed: '送信に失敗しました。'
+}
+
+function refusalOf({ reason, message }) {
+  return reason === 'failed' && message ? REFUSALS.failed + message : REFUSALS[reason] ?? REFUSALS.failed
+}
+
+function statusOf(waiting, outcome) {
+  if (waiting) return { state: 'sending', text: '送信中…' }
+  if (outcome?.sent === true) return { state: 'sent', text: '送信しました。' }
+  if (outcome?.sent === false) return { state: 'refused', text: refusalOf(outcome) }
+  return null
 }
 
 function offerOf(element) {
@@ -61,7 +73,8 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
       for (const button of next.querySelectorAll('[data-next], [data-submit]')) {
         button.classList.toggle('sending', sending && (button.hasAttribute('data-submit') || Number(button.dataset.index) === outcome?.index))
       }
-      if (outcome?.sent === false) {
+      const shown = statusOf(pending.has(key), outcome)
+      if (shown) {
         let status = next.querySelector('.status')
         if (!status) {
           status = next.ownerDocument.createElement('p')
@@ -69,7 +82,8 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
           status.setAttribute('role', 'status')
           next.appendChild(status)
         }
-        status.textContent = outcome.reason === 'failed' && outcome.message ? MESSAGES.failed + outcome.message : MESSAGES[outcome.reason] ?? MESSAGES.failed
+        status.dataset.state = shown.state
+        status.textContent = shown.text
       } else {
         next.querySelector('.status')?.remove()
       }
@@ -82,7 +96,7 @@ export function sendOnPress(root, send, { answerAsk, now = Date.now, settleMs = 
     outcomes.set(key, { index: request.index })
     restore()
     let result
-    try { result = await (answer ? answerAsk(request) : send(request)) } catch { result = { sent: false, reason: 'failed' } }
+    try { result = await (answer ? answerAsk(request) : send(request)) } catch (error) { result = { sent: false, reason: error?.code === 'timeout' ? 'timeout' : 'failed' } }
     pending.delete(key)
     outcomes.set(key, { ...result, index: request.index })
     restore()

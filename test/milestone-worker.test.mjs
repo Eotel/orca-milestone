@@ -172,6 +172,9 @@ test('next and ask submits go through core, preserving refusal reasons and refre
   t.mock.timers.tick(150)
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(h.requests.length, before + 2)
+  h.state.postError = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+  assert.equal((await h.worker.answerAsk({ id: 'ask:a', revision: 4, answers: [], text: '公開します' })).reason, 'timeout')
+  h.state.postError = null
   h.state.postResult = { output: 'sent' }
   h.state.postStatus = 200
   assert.deepEqual(await h.worker.answerAsk({ id: 'ask:a', revision: 4, answers: [], text: '公開します' }), { sent: true })
