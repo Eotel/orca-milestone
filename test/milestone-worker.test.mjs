@@ -127,6 +127,7 @@ test('asks precede steps newest first, preserve questions and recommended labels
 
 test('turn rows show elapsed ages and openable paths; other rows use core counts and done offers first', async (t) => {
   const { turnItem } = await import('./core-fixture.mjs')
+  const briefSteps = { source: 'brief', goal: null, done: 0, total: 3, items: [] }
   const h = harness(t, { items: [
     turnItem({ path: null, workspace: 'remote', opened_at: '2026-11-16T12:00:00+09:00' }),
     turnItem({ workspace: 'busy', path: '/work/busy', opened_at: '2026-11-18T10:00:00+09:00' }),
@@ -135,7 +136,9 @@ test('turn rows show elapsed ages and openable paths; other rows use core counts
     workspace(), workspace('busy'), workspace('empty', { agents: [], steps: { source: 'none', done: 0, total: 0, items: [] } }),
     workspace('ready', { agents: [{ agent: 'codex', state: 'done' }], next: { id: 'offer:r', agent: 'codex', suggestions: [{ label: '送る', prompt: 'Core prompt' }] } }),
     workspace('steps-only', { agents: [] }),
-    workspace('finished', { agents: [], steps: { source: 'brief', goal: null, done: 5, total: 5, items: [] } }),
+    workspace('brief-only', { agents: [], steps: briefSteps }),
+    workspace('active-brief', { steps: briefSteps }),
+    workspace('finished', { agents: [], steps: { source: 'tasks', goal: null, done: 5, total: 5, items: [] } }),
     workspace('agent-only', { steps: { source: 'none', goal: null, done: 0, total: 0, items: [] } }),
     workspace('pair', { agents: [{ agent: 'claude', state: 'done' }, { agent: 'claude', state: 'done' }] }),
     workspace('asking', { agents: [{ agent: 'claude', state: 'waiting' }], steps: { source: 'none', goal: null, done: 0, total: 0, items: [] } })
@@ -147,7 +150,7 @@ test('turn rows show elapsed ages and openable paths; other rows use core counts
   assert.equal(doc.querySelectorAll('.turn [data-open]').length, 2)
   assert.equal(doc.querySelector('.turn h2 span').textContent, 'Owner の番')
   assert.equal(doc.querySelector('.turn .title').textContent, 'Review the design')
-  assert.deepEqual([...doc.querySelectorAll('.others .name')].map((node) => node.textContent), ['asking', 'ready', 'busy', 'steps-only', 'pair'])
+  assert.deepEqual([...doc.querySelectorAll('.others .name')].map((node) => node.textContent), ['asking', 'ready', 'busy', 'steps-only', 'active-brief', 'pair'])
   assert.equal(doc.querySelector('.others [data-key="/work/pair"] .row-agent').textContent, 'Claude 待機中 ×2')
   const ready = doc.querySelector('.others [data-key="/work/ready"]')
   assert.match(ready.textContent, /Codex 待機中.*step 1 \/ 3.*Core prompt.*Codex に送信/s)
